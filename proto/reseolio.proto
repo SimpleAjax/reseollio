@@ -1,0 +1,131 @@
+syntax = "proto3";
+
+package reseolio;
+
+option go_package = "github.com/reseolio/reseolio/sdks/go/proto";
+
+// The Reseolio service provides durable function execution
+service Reseolio {
+  // Enqueue a new job for durable execution
+  rpc EnqueueJob(EnqueueRequest) returns (EnqueueResponse);
+  
+  // Worker polls for available jobs (bidirectional streaming)
+  rpc PollJobs(stream PollRequest) returns (stream Job);
+  
+  // Report job completion (success or failure)
+  rpc AckJob(AckRequest) returns (AckResponse);
+  
+  // Query the status of a specific job
+  rpc GetJob(GetJobRequest) returns (Job);
+  
+  // Cancel a pending job
+  rpc CancelJob(CancelRequest) returns (CancelResponse);
+  
+  // List jobs with filtering
+  rpc ListJobs(ListJobsRequest) returns (ListJobsResponse);
+}
+
+// === Enqueue Messages ===
+
+message EnqueueRequest {
+  string name = 1;              // Function identifier (e.g., "send-email")
+  bytes args = 2;               // Serialized function arguments (JSON)
+  JobOptions options = 3;       // Retry and backoff configuration
+  string idempotency_key = 4;   // Optional: prevent duplicate jobs
+}
+
+message EnqueueResponse {
+  string job_id = 1;            // Unique job identifier (UUID)
+  bool deduplicated = 2;        // True if job already existed (idempotency)
+}
+
+message JobOptions {
+  int32 max_attempts = 1;       // Maximum retry attempts (default: 3)
+  string backoff = 2;           // "fixed", "exponential", "linear"
+  int32 initial_delay_ms = 3;   // Initial delay between retries (default: 1000)
+  int32 max_delay_ms = 4;       // Maximum delay cap (default: 60000)
+  int32 timeout_ms = 5;         // Per-attempt timeout (default: 30000)
+  float jitter = 6;             // Randomization factor 0.0-1.0 (default: 0.1)
+}
+
+// === Poll Messages ===
+
+message PollRequest {
+  string worker_id = 1;         // Unique worker identifier
+  repeated string names = 2;    // Function names this worker can handle (empty = all)
+  int32 concurrency = 3;        // How many jobs this worker can handle at once
+}
+
+message Job {
+  string id = 1;                // Job UUID
+  string name = 2;              // Function identifier
+  bytes args = 3;               // Serialized arguments
+  int32 attempt = 4;            // Current attempt number (1-indexed)
+  int64 deadline_ms = 5;        // Unix timestamp when job times out
+  JobStatus status = 6;         // Current job status
+  string error = 7;             // Last error message (if failed)
+  bytes result = 8;             // Serialized result (if success)
+  int64 created_at = 9;         // Unix timestamp of creation
+  int64 scheduled_at = 10;      // Unix timestamp of next scheduled run
+}
+
+enum JobStatus {
+  JOB_STATUS_UNSPECIFIED = 0;
+  JOB_STATUS_PENDING = 1;
+  JOB_STATUS_RUNNING = 2;
+  JOB_STATUS_SUCCESS = 3;
+  JOB_STATUS_FAILED = 4;
+  JOB_STATUS_DEAD = 5;
+  JOB_STATUS_CANCELLED = 6;
+}
+
+// === Ack Messages ===
+
+message AckRequest {
+  string job_id = 1;            // Job to acknowledge
+  AckResult result = 2;         // Execution result
+}
+
+message AckResult {
+  bool success = 1;             // True if execution succeeded
+  bytes return_value = 2;       // Serialized return value (if success)
+  string error = 3;             // Error message (if failed)
+  bool should_retry = 4;        // SDK can force no-retry on certain errors
+}
+
+message AckResponse {
+  JobStatus new_status = 1;     // Job's new status after ack
+  int32 next_attempt = 2;       // Next attempt number (if retrying)
+  int64 next_run_at = 3;        // Next scheduled run (if retrying)
+}
+
+// === Get/Cancel Messages ===
+
+message GetJobRequest {
+  string job_id = 1;
+}
+
+message CancelRequest {
+  string job_id = 1;
+}
+
+message CancelResponse {
+  bool success = 1;             // True if job was cancelled
+  string message = 2;           // Error message if cancellation failed
+}
+
+// === List Messages ===
+
+message ListJobsRequest {
+  repeated JobStatus statuses = 1;  // Filter by status (empty = all)
+  repeated string names = 2;        // Filter by function name (empty = all)
+  int32 limit = 3;                  // Max results (default: 100)
+  int32 offset = 4;                 // Pagination offset
+  string order_by = 5;              // "created_at", "scheduled_at" (default: created_at)
+  bool ascending = 6;               // Sort order (default: false = descending)
+}
+
+message ListJobsResponse {
+  repeated Job jobs = 1;
+  int32 total = 2;                  // Total matching jobs (for pagination)
+}

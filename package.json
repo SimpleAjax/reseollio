@@ -1,0 +1,25 @@
+{
+  "name": "reseolio",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The SQLite of Durable Execution - Monorepo",
+  "workspaces": [
+    "sdks/node",
+    "dashboard"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "test": "npm run test --workspaces",
+    "test:e2e": "npm run test:e2e --workspace=sdks/node",
+    "lint": "npm run lint --workspaces",
+    "typecheck": "npm run typecheck --workspaces"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/reseolio/reseolio.git"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
