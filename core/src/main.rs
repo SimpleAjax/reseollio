@@ -8,11 +8,62 @@ mod scheduler;
 mod server;
 mod storage;
 
+use clap::Parser;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use storage::Storage;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
+
+/// The SQLite of Durable Execution
+///
+/// Reseolio is a lightweight sidecar for durable function execution.
+/// It persists function calls to SQLite and ensures they run to completion,
+/// even across server restarts.
+#[derive(Parser, Debug)]
+#[command(name = "reseolio")]
+#[command(author, version, about, long_about = None)]
+struct Config {
+    /// Path to SQLite database file
+    #[arg(
+        short = 'd',
+        long,
+        env = "RESEOLIO_DB",
+        default_value = "reseolio.db",
+        help = "Path to SQLite database file"
+    )]
+    database_path: PathBuf,
+
+    /// Address to bind the gRPC server to
+    #[arg(
+        short = 'a',
+        long,
+        env = "RESEOLIO_ADDR",
+        default_value = "127.0.0.1:50051",
+        help = "Address to listen on (format: host:port)"
+    )]
+    listen_addr: String,
+
+    /// Maximum number of concurrent jobs to process
+    #[arg(
+        short = 'c',
+        long,
+        env = "RESEOLIO_MAX_CONCURRENT",
+        default_value_t = 100,
+        help = "Maximum concurrent jobs"
+    )]
+    max_concurrent_jobs: usize,
+
+    /// Scheduler poll interval in milliseconds
+    #[arg(
+        short = 'p',
+        long,
+        env = "RESEOLIO_POLL_INTERVAL",
+        default_value_t = 100,
+        help = "How often to check for pending jobs (ms)"
+    )]
+    poll_interval_ms: u64,
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -24,8 +75,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Starting Reseolio Core v{}", env!("CARGO_PKG_VERSION"));
 
-    // Parse configuration from environment
-    let config = Config::from_env();
+    // Parse configuration from CLI args and environment variables
+    let config = Config::parse();
 
     // Initialize storage
     let storage = storage::SqliteStorage::new(&config.database_path).await?;
@@ -54,36 +105,4 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Reseolio Core shutdown complete");
 
     Ok(())
-}
-
-/// Configuration for Reseolio Core
-struct Config {
-    /// Path to SQLite database file
-    database_path: PathBuf,
-    /// Address to listen on for gRPC
-    listen_addr: String,
-    /// Maximum concurrent jobs to process
-    max_concurrent_jobs: usize,
-    /// Scheduler poll interval in milliseconds
-    poll_interval_ms: u64,
-}
-
-impl Config {
-    fn from_env() -> Self {
-        Self {
-            database_path: std::env::var("RESEOLIO_DB")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| PathBuf::from("reseolio.db")),
-            listen_addr: std::env::var("RESEOLIO_ADDR")
-                .unwrap_or_else(|_| "127.0.0.1:50051".to_string()),
-            max_concurrent_jobs: std::env::var("RESEOLIO_MAX_CONCURRENT")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(100),
-            poll_interval_ms: std::env::var("RESEOLIO_POLL_INTERVAL")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(100),
-        }
-    }
 }

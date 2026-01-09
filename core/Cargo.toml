@@ -20,6 +20,7 @@ tracing-subscriber = { workspace = true }
 async-trait = { workspace = true }
 rand = { workspace = true }
 tokio-stream = { workspace = true }
+clap = { workspace = true }
 
 [build-dependencies]
 tonic-build = "0.10"

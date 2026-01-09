@@ -237,7 +237,7 @@ export class Reseolio extends EventEmitter {
         const protoPath = join(__dirname, '..', '..', '..', 'proto', 'reseolio.proto');
 
         const packageDefinition = await protoLoader.load(protoPath, {
-            keepCase: true,
+            keepCase: false,  // ← FIXED: Convert to camelCase!
             longs: String,
             enums: String,
             defaults: true,
