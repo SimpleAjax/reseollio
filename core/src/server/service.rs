@@ -134,7 +134,8 @@ impl<S: Storage> Reseolio for ReseolioServer<S> {
         tokio::spawn(async move {
             let mut worker_id: Option<String> = None;
             let mut names: Vec<String> = vec![];
-
+            // TODO : Improve this : for 100 workers connected, eveery second if 100ms is polling freq, we will perform 1k req/sec just to claim job, leading to un-necessary high usage. 
+            // TODO : somehow reduce the thundering herd issue (jitter + expo backoff is one way, but ideally some workers at a time should be pinged to take up job work)
             loop {
                 tokio::select! {
                     // Handle incoming poll requests
