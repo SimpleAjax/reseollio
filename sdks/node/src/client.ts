@@ -45,6 +45,7 @@ export class Reseolio extends EventEmitter {
     private registry: FunctionRegistry = {};
     private workerId: string;
     private workerStream: any = null;
+    private activeJobs: Set<string> = new Set();  // Track jobs being executed
 
     constructor(config: ReseolioConfig = {}) {
         super();
@@ -85,6 +86,21 @@ export class Reseolio extends EventEmitter {
      * Stop the client and core process
      */
     async stop(): Promise<void> {
+        // Wait for active jobs to finish (with timeout)
+        const maxWait = 5000; // 5 seconds
+        const startTime = Date.now();
+        while (this.activeJobs.size > 0 && Date.now() - startTime < maxWait) {
+            await new Promise(r => setTimeout(r, 100));
+        }
+
+        if (this.activeJobs.size > 0) {
+            console.warn(`[Reseolio] ${this.activeJobs.size} jobs still active during shutdown`);
+        }
+
+        // Grace period to allow any in-flight messages to be delivered
+        // This prevents "connection reset" errors when jobs are sent but not yet received
+        await new Promise(r => setTimeout(r, 500));
+
         // Stop worker stream
         if (this.workerStream) {
             this.workerStream.cancel();
@@ -316,9 +332,12 @@ export class Reseolio extends EventEmitter {
             concurrency: this.config.workerConcurrency,
         });
 
-        // Handle incoming jobs
-        call.on('data', async (job: Job) => {
-            await this.executeJob(job);
+        // Handle incoming jobs (fire-and-forget to avoid blocking)
+        call.on('data', (job: Job) => {
+            // Don't await here - execute jobs concurrently!
+            this.executeJob(job).catch((err) => {
+                this.emit('worker:error', err);
+            });
         });
 
         call.on('error', (err: Error) => {
@@ -335,15 +354,19 @@ export class Reseolio extends EventEmitter {
     }
 
     private async executeJob(job: Job): Promise<void> {
+        // Track this job as active
+        this.activeJobs.add(job.id);
+
         const registration = this.registry[job.name];
 
         if (!registration) {
             // Unknown job, acknowledge with error
-            this.ackJob(job.id, {
+            await this.ackJob(job.id, {
                 success: false,
                 error: `Unknown function: ${job.name}`,
                 shouldRetry: false,
             });
+            this.activeJobs.delete(job.id);
             return;
         }
 
@@ -380,6 +403,9 @@ export class Reseolio extends EventEmitter {
             });
 
             this.emit('job:error', job, error);
+        } finally {
+            // Remove from active jobs
+            this.activeJobs.delete(job.id);
         }
     }
 
