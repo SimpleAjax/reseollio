@@ -134,21 +134,30 @@ impl<S: Storage> Reseolio for ReseolioServer<S> {
         tokio::spawn(async move {
             let mut worker_id: Option<String> = None;
             let mut names: Vec<String> = vec![];
-            // TODO : Improve this : for 100 workers connected, eveery second if 100ms is polling freq, we will perform 1k req/sec just to claim job, leading to un-necessary high usage. 
+            // TODO : Improve this : for 100 workers connected, eveery second if 100ms is polling freq, we will perform 1k req/sec just to claim job, leading to un-necessary high usage.
             // TODO : somehow reduce the thundering herd issue (jitter + expo backoff is one way, but ideally some workers at a time should be pinged to take up job work)
             loop {
                 tokio::select! {
                     // Handle incoming poll requests
-                    Some(result) = stream.next() => {
-                        match result {
-                            Ok(poll_req) => {
+                    poll_result = stream.next() => {
+                        match poll_result {
+                            Some(Ok(poll_req)) => {
                                 worker_id = Some(poll_req.worker_id.clone());
                                 names = poll_req.names;
                                 debug!("Worker {} polling for jobs", poll_req.worker_id);
                             }
-                            Err(e) => {
+                            Some(Err(e)) => {
                                 error!("Poll stream error: {}", e);
                                 break;
+                            }
+                            None => {
+                                // Stream closed by client
+                                if let Some(ref wid) = worker_id {
+                                    info!("Worker {} disconnected (stream closed)", wid);
+                                } else {
+                                    info!("Worker stream closed before registration");
+                                }
+                                break;  // Exit task - client disconnected
                             }
                         }
                     }
@@ -156,7 +165,7 @@ impl<S: Storage> Reseolio for ReseolioServer<S> {
                     // Check for available jobs
                     _ = notify.notified() => {
                         if let Some(ref wid) = worker_id {
-                            match storage.get_pending_jobs(1).await {
+                            match storage.get_pending_jobs(10).await {  // ← Fetch up to 10 jobs
                                 Ok(jobs) => {
                                     for job in jobs {
                                         // Filter by name if specified
@@ -167,9 +176,25 @@ impl<S: Storage> Reseolio for ReseolioServer<S> {
                                         // Try to claim the job
                                         if let Ok(true) = storage.claim_job(&job.id, wid).await {
                                             let proto_job = job_to_proto(&job);
-                                            if tx.send(Ok(proto_job)).await.is_err() {
-                                                return;
+                                            debug!("Sending job {} ({}) to worker {}", job.id, job.name, wid);
+                                            match tx.send(Ok(proto_job)).await {
+                                                Ok(()) => {
+                                                    debug!("Successfully sent job {} to worker", job.id);
+                                                }
+                                                Err(_) => {
+                                                    error!(
+                                                        "Failed to send job {} ({}) to worker {}: Channel closed (receiver dropped)",
+                                                        job.id, job.name, wid
+                                                    );
+                                                    error!(
+                                                        "Worker {} disconnected while processing jobs. Remaining jobs will be retried.",
+                                                        wid
+                                                    );
+                                                    break;
+                                                }
                                             }
+                                        } else {
+                                            debug!("Job {} was not claimed (already claimed or not pending)", job.id);
                                         }
                                     }
                                 }
@@ -183,7 +208,7 @@ impl<S: Storage> Reseolio for ReseolioServer<S> {
                     // Periodic poll every 100ms
                     _ = tokio::time::sleep(tokio::time::Duration::from_millis(100)) => {
                         if let Some(ref wid) = worker_id {
-                            match storage.get_pending_jobs(1).await {
+                            match storage.get_pending_jobs(10).await {  // ← Fetch up to 10 jobs
                                 Ok(jobs) => {
                                     for job in jobs {
                                         if !names.is_empty() && !names.contains(&job.name) {
@@ -192,9 +217,25 @@ impl<S: Storage> Reseolio for ReseolioServer<S> {
 
                                         if let Ok(true) = storage.claim_job(&job.id, wid).await {
                                             let proto_job = job_to_proto(&job);
-                                            if tx.send(Ok(proto_job)).await.is_err() {
-                                                return;
+                                            debug!("Sending job {} ({}) to worker {} (periodic)", job.id, job.name, wid);
+                                            match tx.send(Ok(proto_job)).await {
+                                                Ok(()) => {
+                                                    debug!("Successfully sent job {} to worker (periodic)", job.id);
+                                                }
+                                                Err(_) => {
+                                                    error!(
+                                                        "Failed to send job {} ({}) to worker {} (periodic): Channel closed (receiver dropped)",
+                                                        job.id, job.name, wid
+                                                    );
+                                                    error!(
+                                                        "Worker {} disconnected during periodic poll. Remaining jobs will be retried.",
+                                                        wid
+                                                    );
+                                                    break;
+                                                }
                                             }
+                                        } else {
+                                            debug!("Job {} was not claimed (already claimed or not pending)", job.id);
                                         }
                                     }
                                 }
