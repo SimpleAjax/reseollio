@@ -129,6 +129,7 @@ impl<S: Storage> Reseolio for ReseolioServer<S> {
         let storage = self.storage.clone();
         let notify = self.job_notify.clone();
 
+        // TODO: User better channel size, tune the default value and make it configurable if necessary
         let (tx, rx) = mpsc::channel(100);
 
         tokio::spawn(async move {
@@ -165,6 +166,7 @@ impl<S: Storage> Reseolio for ReseolioServer<S> {
                     // Check for available jobs
                     _ = notify.notified() => {
                         if let Some(ref wid) = worker_id {
+                            //TODO: User configurable batch size 
                             match storage.get_pending_jobs(10).await {  // ← Fetch up to 10 jobs
                                 Ok(jobs) => {
                                     for job in jobs {
@@ -208,6 +210,7 @@ impl<S: Storage> Reseolio for ReseolioServer<S> {
                     // Periodic poll every 100ms
                     _ = tokio::time::sleep(tokio::time::Duration::from_millis(100)) => {
                         if let Some(ref wid) = worker_id {
+                            //TODO: User configurable batch size
                             match storage.get_pending_jobs(10).await {  // ← Fetch up to 10 jobs
                                 Ok(jobs) => {
                                     for job in jobs {
