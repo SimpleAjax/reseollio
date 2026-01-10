@@ -11,10 +11,12 @@ async function main() {
     const NUM_JOBS = 1000;
     const JOB_DURATION_MS = 10;
 
-    console.log(`🔬 LOAD TEST: Basic Throughput`);
-    console.log(`   Jobs: ${NUM_JOBS}`);
-    console.log(`   Job duration: ${JOB_DURATION_MS}ms`);
-    console.log(`   Workers: 1\n`);
+    console.log(`\n========================================`);
+    console.log(`LOAD TEST: Basic Throughput`);
+    console.log(`========================================`);
+    console.log(`Jobs:         ${NUM_JOBS}`);
+    console.log(`Job duration: ${JOB_DURATION_MS}ms`);
+    console.log(`Workers:      1\n`);
 
     const reseolio = new Reseolio({
         storage: 'sqlite://./load-test.db',
@@ -38,13 +40,13 @@ async function main() {
         latencies.push(latency);
 
         if (jobsCompleted % 100 === 0) {
-            console.log(`  ✅ Completed: ${jobsCompleted}/${NUM_JOBS}`);
+            console.log(`  [OK] Completed: ${jobsCompleted}/${NUM_JOBS}`);
         }
     });
 
     reseolio.on('job:error', (job, err) => {
         jobsFailed++;
-        console.error(`  ❌ Job ${job.id} failed:`, err);
+        console.error(`  [ERR] Job ${job.id} failed:`, err);
     });
 
     try {
@@ -60,7 +62,7 @@ async function main() {
         );
 
         // Enqueue phase
-        console.log(`\n Enqueueing ${NUM_JOBS} jobs...`);
+        console.log(`=> Enqueueing ${NUM_JOBS} jobs...`);
         const enqueueStart = Date.now();
 
         const jobs = [];
@@ -70,13 +72,15 @@ async function main() {
         const jobHandles = await Promise.all(jobs);
 
         const enqueueTime = Date.now() - enqueueStart;
-        console.log(`✅ Enqueued in ${enqueueTime}ms (${(NUM_JOBS / (enqueueTime / 1000)).toFixed(2)} jobs/sec)`);
+        console.log(`[OK] Enqueued in ${enqueueTime}ms (${(NUM_JOBS / (enqueueTime / 1000)).toFixed(2)} jobs/sec)`);
 
         // Processing phase
-        console.log(`\n⏳ Processing jobs...\n`);
+        console.log(`\n=> Processing jobs...\n`);
         const processStart = Date.now();
+        console.log(`\n=> start awaiting for processing job...\n`);
 
         await Promise.all(jobHandles.map(j => j.result()));
+        console.log(`\n=> completed awaiting for processing job...\n`);
 
         const processTime = Date.now() - processStart;
 
@@ -89,8 +93,9 @@ async function main() {
         const p99 = latencies[Math.floor(latencies.length * 0.99)];
 
         // Report
-        console.log(`\n\n RESULTS`);
-        console.log(`═══════════════════════════════════════`);
+        console.log(`\n========================================`);
+        console.log(`RESULTS`);
+        console.log(`========================================`);
         console.log(`Total Jobs:       ${NUM_JOBS}`);
         console.log(`Completed:        ${jobsCompleted}`);
         console.log(`Failed:           ${jobsFailed}`);
@@ -106,20 +111,21 @@ async function main() {
         console.log(`  p50:            ${p50}`);
         console.log(`  p95:            ${p95}`);
         console.log(`  p99:            ${p99}`);
-        console.log(`═══════════════════════════════════════\n`);
+        console.log(`========================================\n`);
 
         // Success criteria
         const passed = jobsCompleted === NUM_JOBS && throughput > 50;
         if (passed) {
-            console.log(`✅ TEST PASSED`);
-            console.log(`   All jobs completed, throughput > 50 jobs/sec\n`);
+            console.log(`[PASS] TEST PASSED`);
+            console.log(`  - All jobs completed`);
+            console.log(`  - Throughput > 50 jobs/sec\n`);
         } else {
-            console.log(`❌ TEST FAILED`);
+            console.log(`[FAIL] TEST FAILED`);
             if (jobsCompleted < NUM_JOBS) {
-                console.log(`   Expected ${NUM_JOBS} jobs, got ${jobsCompleted}`);
+                console.log(`  - Expected ${NUM_JOBS} jobs, got ${jobsCompleted}`);
             }
             if (throughput <= 50) {
-                console.log(`   Throughput too low: ${throughput.toFixed(2)} jobs/sec (target: >50)`);
+                console.log(`  - Throughput too low: ${throughput.toFixed(2)} jobs/sec (target: >50)`);
             }
             console.log();
         }
@@ -128,7 +134,7 @@ async function main() {
         process.exit(passed ? 0 : 1);
 
     } catch (error) {
-        console.error('\n❌ Fatal error:', error);
+        console.error('\n[FATAL] Error:', error);
         await reseolio.stop().catch(() => { });
         process.exit(1);
     }

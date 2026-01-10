@@ -140,25 +140,16 @@ impl<S: Storage> Reseolio for ReseolioServer<S> {
             loop {
                 tokio::select! {
                     // Handle incoming poll requests
-                    poll_result = stream.next() => {
-                        match poll_result {
-                            Some(Ok(poll_req)) => {
+                    Some(result) = stream.next() => {
+                        match result {
+                            Ok(poll_req) => {
                                 worker_id = Some(poll_req.worker_id.clone());
                                 names = poll_req.names;
                                 debug!("Worker {} polling for jobs", poll_req.worker_id);
                             }
-                            Some(Err(e)) => {
+                            Err(e) => {
                                 error!("Poll stream error: {}", e);
                                 break;
-                            }
-                            None => {
-                                // Stream closed by client
-                                if let Some(ref wid) = worker_id {
-                                    info!("Worker {} disconnected (stream closed)", wid);
-                                } else {
-                                    info!("Worker stream closed before registration");
-                                }
-                                break;  // Exit task - client disconnected
                             }
                         }
                     }
@@ -166,7 +157,7 @@ impl<S: Storage> Reseolio for ReseolioServer<S> {
                     // Check for available jobs
                     _ = notify.notified() => {
                         if let Some(ref wid) = worker_id {
-                            //TODO: User configurable batch size 
+                            //TODO: User configurable batch size
                             match storage.get_pending_jobs(10).await {  // ← Fetch up to 10 jobs
                                 Ok(jobs) => {
                                     for job in jobs {
