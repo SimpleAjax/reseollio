@@ -1,0 +1,74 @@
+# Multi-stage Dockerfile for running load tests
+# Stage 1: Build Rust binary for Linux
+FROM rust:1.82-bookworm AS rust-builder
+
+# Install protobuf compiler (needed by prost-build)
+RUN apt-get update && apt-get install -y --no-install-recommends protobuf-compiler \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy Cargo files for dependency caching
+# Note: We don't copy Cargo.lock to avoid CRLF line ending issues from Windows
+COPY Cargo.toml ./
+COPY core/Cargo.toml ./core/
+
+# Create dummy source to cache dependencies
+RUN mkdir -p core/src && \
+    echo "fn main() {}" > core/src/main.rs && \
+    cargo build --release && \
+    rm -rf core/src
+
+# Copy actual source and build
+COPY core ./core
+COPY proto ./proto
+RUN touch core/src/main.rs && cargo build --release
+
+# Stage 2: Node.js with Rust binary
+FROM node:22-bookworm-slim
+
+WORKDIR /app
+
+# Install protobuf compiler for gRPC and debugging tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    protobuf-compiler \
+    procps \
+    lsof \
+    htop \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy Rust binary from builder
+COPY --from=rust-builder /app/target/release/reseolio /usr/local/bin/reseolio
+
+# Copy package files for npm install
+COPY package.json package-lock.json ./
+COPY sdks/node/package.json ./sdks/node/
+
+# Create placeholder for dashboard if needed by workspaces
+RUN mkdir -p dashboard && echo '{"name":"dashboard","version":"0.1.0","private":true}' > dashboard/package.json
+
+# Install dependencies
+RUN npm ci --ignore-scripts 2>/dev/null || npm install --ignore-scripts
+
+# Install tsx globally to avoid npx prompts
+RUN npm install -g tsx
+
+# Copy proto files
+COPY proto ./proto
+
+# Copy SDK source and build
+COPY sdks/node ./sdks/node
+RUN cd sdks/node && npm run build
+
+# Copy test files
+COPY tests ./tests
+
+# Create data directory
+RUN mkdir -p /data
+
+# Environment variables
+ENV NODE_ENV=test
+ENV RESEOLIO_DATA_DIR=/data
+
+# Default command runs all load tests
+CMD ["sh", "-c", "reseolio & sleep 2 && tsx tests/load/02-multi-worker.ts"]

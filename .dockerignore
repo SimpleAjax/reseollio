@@ -1,0 +1,30 @@
+# Rust build artifacts (we build fresh in Docker)
+target/
+
+# Node modules (we install fresh in Docker)
+node_modules/
+sdks/node/node_modules/
+dashboard/node_modules/
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Git
+.git/
+
+# Test results (mounted as volume)
+test-results/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

@@ -1,0 +1,112 @@
+services:
+  loadtest:
+    build:
+      context: .
+      dockerfile: Dockerfile.loadtest
+    container_name: reseolio-loadtest
+    volumes:
+      # Mount test results directory
+      - ./test-results:/data
+    environment:
+      - NODE_ENV=test
+      - RESEOLIO_LOG_LEVEL=info
+    # Override command to run specific test
+    # Use: docker-compose -f docker-compose.loadtest.yml run loadtest <command>
+    command: >
+      sh -c "
+        echo '==> Starting Reseolio server...' &&
+        reseolio &
+        sleep 2 &&
+        echo '==> Running multi-worker load test...' &&
+        tsx tests/load/02-multi-worker.ts &&
+        echo '==> Load test complete!'
+      "
+
+  # Individual test services for running specific tests
+  throughput-test:
+    build:
+      context: .
+      dockerfile: Dockerfile.loadtest
+    container_name: reseolio-throughput-test
+    volumes:
+      - ./test-results:/data
+    command: >
+      sh -c "
+        reseolio &
+        sleep 2 &&
+        tsx tests/load/01-throughput.ts
+      "
+
+  multi-worker-test:
+    build:
+      context: .
+      dockerfile: Dockerfile.loadtest
+    container_name: reseolio-multi-worker-test
+    volumes:
+      - ./test-results:/data
+    command: >
+      sh -c "
+        reseolio &
+        sleep 2 &&
+        tsx tests/load/02-multi-worker.ts
+      "
+
+  retry-storm-test:
+    build:
+      context: .
+      dockerfile: Dockerfile.loadtest
+    container_name: reseolio-retry-storm-test
+    volumes:
+      - ./test-results:/data
+    command: >
+      sh -c "
+        reseolio &
+        sleep 2 &&
+        tsx tests/load/03-retry-storm.ts
+      "
+
+  # Run all load tests sequentially
+  all-tests:
+    build:
+      context: .
+      dockerfile: Dockerfile.loadtest
+    container_name: reseolio-all-tests
+    volumes:
+      - ./test-results:/data
+    command: >
+      sh -c "
+        reseolio &
+        sleep 2 &&
+        echo '========== THROUGHPUT TEST ==========' &&
+        tsx tests/load/01-throughput.ts &&
+        echo '' &&
+        echo '========== MULTI-WORKER TEST ==========' &&
+        tsx tests/load/02-multi-worker.ts &&
+        echo '' &&
+        echo '========== RETRY STORM TEST ==========' &&
+        tsx tests/load/03-retry-storm.ts &&
+        echo '' &&
+        echo '========== ALL TESTS COMPLETE =========='
+      "
+
+  # Development/debug service - keeps container alive for manual testing
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.loadtest
+    container_name: reseolio-dev
+    volumes:
+      - ./test-results:/data
+      - ./tests:/app/tests  # Mount tests for live editing
+    stdin_open: true
+    tty: true
+    command: >
+      sh -c "
+        echo '==> Starting Reseolio server...' &&
+        reseolio &
+        sleep 2 &&
+        echo '==> Server ready! Container will stay alive.' &&
+        echo '==> Run tests with: tsx tests/load/02-multi-worker.ts' &&
+        echo '' &&
+        tail -f /dev/null
+      "

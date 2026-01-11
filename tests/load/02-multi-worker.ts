@@ -14,8 +14,7 @@ const JOB_DURATION_MS = 100;
 
 async function startWorker(workerId: number): Promise<ChildProcess> {
     return new Promise((resolve, reject) => {
-        const worker = spawn('npx', ['tsx', 'tests/load/worker.ts', String(workerId)], {
-            shell: true,
+        const worker = spawn('tsx', ['tests/load/worker.ts', String(workerId)], {
             stdio: ['ignore', 'pipe', 'pipe'],
             env: {
                 ...process.env,
@@ -152,6 +151,11 @@ async function main() {
 
         // Cleanup
         workers.forEach(w => w.kill('SIGTERM'));
+        // Wait for all workers to exit with timeout
+        await Promise.all(workers.map(w => new Promise(resolve => {
+            w.on('exit', resolve);
+            setTimeout(resolve, 3000);  // Force continue after 3s
+        })));
         await coordinator.stop();
 
         process.exit(passed ? 0 : 1);
