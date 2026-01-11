@@ -6,6 +6,7 @@
 
 **Rust Core (`reseolio-core`)** - ✅ FULLY IMPLEMENTED & COMPILED
 - SQLite storage with full CRUD operations
+- PostgreSQL storage with full CRUD operations (via `postgres` feature)
 - Job scheduler with crash recovery
 - gRPC server with all RPC methods
 - Retry policies (fixed, exponential, linear backoff)
@@ -135,7 +136,7 @@ await reseolio.stop();
 
 1. **Python SDK** - Create `sdks/python/` mirroring the Node SDK structure
 2. **Dashboard CLI** - `npx reseolio ui` for local web dashboard
-3. **PostgreSQL Support** - Implement postgres storage driver
+3. **PostgreSQL Support** - ✅ Implemented (run `cargo check --features postgres`)
 4. **Leader Election** - For multi-instance deployments
 5. **Cron Scheduling** - `reseolio.schedule('0 8 * * *', handler)`
 
@@ -143,7 +144,7 @@ await reseolio.stop();
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `RESEOLIO_DB` | `reseolio.db` | Path to SQLite database |
+| `RESEOLIO_DB` | `reseolio.db` | Connection string (`sqlite://file.db` or `postgres://...`) |
 | `RESEOLIO_ADDR` | `127.0.0.1:50051` | gRPC server address |
 | `RESEOLIO_MAX_CONCURRENT` | `100` | Max concurrent jobs (planned) |
 | `RESEOLIO_POLL_INTERVAL` | `100` | Scheduler poll interval (ms) (planned) |
