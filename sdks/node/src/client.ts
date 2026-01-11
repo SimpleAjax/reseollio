@@ -49,7 +49,7 @@ export class Reseolio extends EventEmitter {
 
     constructor(config: ReseolioConfig = {}) {
         super();
-
+        // TODO: checkout possibility of worker id conflict
         this.workerId = `worker-${uuidv4().slice(0, 8)}`;
 
         this.config = {
@@ -68,6 +68,8 @@ export class Reseolio extends EventEmitter {
         // Load proto definition
         await this.loadProto();
 
+        console.debug(`starting client : ${this.workerId}`)
+
         // Start core process if auto-start is enabled
         if (this.config.autoStart) {
             await this.startCore();
@@ -80,6 +82,7 @@ export class Reseolio extends EventEmitter {
         this.startWorkerLoop();
 
         this.emit('ready');
+        console.debug(`client started successfully : ${this.workerId}`)
     }
 
     /**
@@ -89,6 +92,7 @@ export class Reseolio extends EventEmitter {
         // Wait for active jobs to finish (with timeout)
         const maxWait = 5000; // 5 seconds
         const startTime = Date.now();
+        console.debug(`stopping client : ${this.workerId}`)
         while (this.activeJobs.size > 0 && Date.now() - startTime < maxWait) {
             await new Promise(r => setTimeout(r, 100));
         }
@@ -121,6 +125,7 @@ export class Reseolio extends EventEmitter {
 
         this.connected = false;
         this.emit('stopped');
+        console.debug(`stopped client successfully : ${this.workerId}`)
     }
 
     /**
