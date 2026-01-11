@@ -418,13 +418,16 @@ export class Reseolio extends EventEmitter {
         jobId: string,
         result: { success: boolean; returnValue?: Buffer; error?: string; shouldRetry?: boolean }
     ): Promise<void> {
+        // console.debug(`[DEBUG] ackJob called: jobId=${jobId}, success=${result.success}, error=${result.error}`);
         return new Promise((resolve, reject) => {
             this.grpcClient.AckJob(
                 { jobId, result },
                 (err: Error | null) => {
                     if (err) {
+                        // console.debug(`[DEBUG] ackJob error: jobId=${jobId}, err=${err.message}`);
                         reject(err);
                     } else {
+                        // console.debug(`[DEBUG] ackJob success: jobId=${jobId}`);
                         resolve();
                     }
                 }

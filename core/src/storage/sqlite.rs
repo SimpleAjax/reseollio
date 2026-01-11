@@ -227,11 +227,19 @@ impl Storage for SqliteStorage {
                 error,
                 should_retry,
             } => {
-                // Get current job to check attempt count
-                let job = self
-                    .get_job(job_id)
-                    .await?
-                    .ok_or_else(|| ReseolioError::JobNotFound(job_id.to_string()))?;
+                // Query current job using already-held connection to avoid deadlock
+                let job = conn
+                    .query_row(
+                        r#"
+                        SELECT id, name, args, options, status, attempt, 
+                               created_at, scheduled_at, started_at, completed_at,
+                               error, result, worker_id, idempotency_key
+                        FROM jobs WHERE id = ?1
+                        "#,
+                        params![job_id],
+                        |row| row_to_job(row),
+                    )
+                    .map_err(StorageError::from)?;
 
                 if should_retry && job.attempt < job.options.max_attempts {
                     // Schedule retry with backoff

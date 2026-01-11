@@ -37,7 +37,6 @@ async function main() {
     });
 
     reseolio.on('job:success', (job) => {
-        jobsSucceeded++;
         console.log(`Job ${job.id} succeeded`);
     });
 
@@ -49,7 +48,6 @@ async function main() {
     try {
         await reseolio.start();
 
-        // Job that fails probabilistically
         const unreliableJob = reseolio.durable(
             'unreliable-job',
             async (id: number, shouldFail: boolean) => {
@@ -66,6 +64,7 @@ async function main() {
             }
         );
 
+
         console.log(`📤 Enqueueing ${NUM_JOBS} unreliable jobs...\n`);
 
         const jobs = [];
@@ -77,7 +76,6 @@ async function main() {
         console.log(`⏳ Processing (expect retries)...\n`);
         const startTime = Date.now();
 
-        // Wait for all to complete (or become DEAD)
         const results = await Promise.allSettled(
             handles.map(h => h.result())
         );
