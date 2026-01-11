@@ -30,16 +30,19 @@ async function main() {
 
     // Track attempts
     reseolio.on('job:start', (job) => {
+        console.log(`Job ${job.id} started`);
         const count = attemptCounts.get(job.attempt) || 0;
         attemptCounts.set(job.attempt, count + 1);
         totalAttempts++;
     });
 
-    reseolio.on('job:success', () => {
+    reseolio.on('job:success', (job) => {
         jobsSucceeded++;
+        console.log(`Job ${job.id} succeeded`);
     });
 
-    reseolio.on('job:error', () => {
+    reseolio.on('job:error', (job) => {
+        console.log(`Job ${job.id} failed`);
         // Will retry if attempts remain
     });
 
