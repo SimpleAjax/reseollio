@@ -1,13 +1,20 @@
-//! gRPC service implementation
+//! gRPC service implementation with Push-Based Job Distribution
+//!
+//! This module implements the Reseolio gRPC service with a push-based architecture.
+//! Workers register with the service and receive jobs pushed directly to them,
+//! eliminating the thundering herd problem.
 
 use crate::error::ReseolioError;
+use crate::scheduler::{WorkerInfo, WorkerRegistry};
 use crate::storage::{JobFilter, JobOptions, JobResult, JobStatus, NewJob, Storage};
+use std::collections::HashSet;
 use std::pin::Pin;
 use std::sync::Arc;
-use tokio::sync::mpsc;
+use std::time::Instant;
+use tokio::sync::{mpsc, Notify};
 use tokio_stream::{wrappers::ReceiverStream, Stream, StreamExt};
 use tonic::{Request, Response, Status, Streaming};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 // Include generated protobuf code
 pub mod proto {
@@ -20,16 +27,24 @@ use proto::*;
 /// The Reseolio gRPC service implementation
 pub struct ReseolioServer<S: Storage> {
     storage: S,
-    /// Channel to notify workers of new jobs
-    job_notify: Arc<tokio::sync::Notify>,
+    /// Worker registry for push-based job distribution
+    registry: WorkerRegistry,
+    /// Channel to notify scheduler of new jobs or completed jobs
+    scheduler_notify: Arc<Notify>,
 }
 
 impl<S: Storage> ReseolioServer<S> {
-    pub fn new(storage: S) -> Self {
+    pub fn new(storage: S, registry: WorkerRegistry, scheduler_notify: Arc<Notify>) -> Self {
         Self {
             storage,
-            job_notify: Arc::new(tokio::sync::Notify::new()),
+            registry,
+            scheduler_notify,
         }
+    }
+
+    /// Get a reference to the worker registry
+    pub fn registry(&self) -> &WorkerRegistry {
+        &self.registry
     }
 
     /// Convert to tonic service
@@ -110,8 +125,8 @@ impl<S: Storage> Reseolio for ReseolioServer<S> {
 
         info!("Enqueued job: {} ({})", job.id, job.name);
 
-        // Notify waiting workers
-        self.job_notify.notify_waiters();
+        // Notify scheduler to process new job immediately
+        self.scheduler_notify.notify_one();
 
         Ok(Response::new(EnqueueResponse {
             job_id: job.id,
@@ -121,129 +136,112 @@ impl<S: Storage> Reseolio for ReseolioServer<S> {
 
     type PollJobsStream = Pin<Box<dyn Stream<Item = Result<proto::Job, Status>> + Send>>;
 
+    /// Handle worker connection and push jobs to them
+    ///
+    /// In the push-based architecture, workers connect via this streaming RPC
+    /// and register their capabilities. The scheduler then pushes jobs directly
+    /// to workers based on their capacity and registered job names.
     async fn poll_jobs(
         &self,
         request: Request<Streaming<PollRequest>>,
     ) -> Result<Response<Self::PollJobsStream>, Status> {
         let mut stream = request.into_inner();
+        let registry = self.registry.clone();
         let storage = self.storage.clone();
-        let notify = self.job_notify.clone();
+        let scheduler_notify = self.scheduler_notify.clone();
 
-        // TODO: User better channel size, tune the default value and make it configurable if necessary
+        // Channel for pushing jobs to this worker
+        // The scheduler will send jobs here, worker receives them
         let (tx, rx) = mpsc::channel(100);
 
+        // Spawn task to handle worker registration and lifecycle
         tokio::spawn(async move {
-            let mut worker_id: Option<String> = None;
-            let mut names: Vec<String> = vec![];
-            // TODO : Improve this : for 100 workers connected, eveery second if 100ms is polling freq, we will perform 1k req/sec just to claim job, leading to un-necessary high usage.
-            // TODO : somehow reduce the thundering herd issue (jitter + expo backoff is one way, but ideally some workers at a time should be pinged to take up job work)
+            // Wait for initial poll request with worker info
+            let worker_id: String;
+            let registered_names: Vec<String>;
+            let concurrency: i32;
+
+            match stream.next().await {
+                Some(Ok(poll_req)) => {
+                    worker_id = poll_req.worker_id.clone();
+                    registered_names = poll_req.names.clone();
+                    concurrency = poll_req.concurrency;
+
+                    // Register worker with the registry
+                    registry
+                        .register(WorkerInfo {
+                            worker_id: worker_id.clone(),
+                            tx: tx.clone(),
+                            registered_names: registered_names.clone(),
+                            concurrency,
+                            active_jobs: HashSet::new(),
+                            last_heartbeat: Instant::now(),
+                        })
+                        .await;
+
+                    info!(
+                        "Worker {} connected (concurrency={}, names={:?})",
+                        worker_id, concurrency, registered_names
+                    );
+
+                    // Notify scheduler that a new worker is available
+                    scheduler_notify.notify_one();
+                }
+                Some(Err(e)) => {
+                    error!("Error reading initial poll request: {}", e);
+                    return;
+                }
+                None => {
+                    debug!("Worker stream closed before registration");
+                    return;
+                }
+            }
+
+            // Keep the stream alive and handle heartbeats / additional messages
             loop {
-                tokio::select! {
-                    // Handle incoming poll requests
-                    Some(result) = stream.next() => {
-                        match result {
-                            Ok(poll_req) => {
-                                worker_id = Some(poll_req.worker_id.clone());
-                                names = poll_req.names;
-                                debug!("Worker {} polling for jobs", poll_req.worker_id);
-                            }
-                            Err(e) => {
-                                error!("Poll stream error: {}", e);
-                                break;
-                            }
-                        }
+                match stream.next().await {
+                    Some(Ok(poll_req)) => {
+                        // Heartbeat or capability update
+                        registry.update_heartbeat(&poll_req.worker_id).await;
+                        debug!("Heartbeat from worker {}", poll_req.worker_id);
                     }
-
-                    // Check for available jobs
-                    _ = notify.notified() => {
-                        if let Some(ref wid) = worker_id {
-                            //TODO: User configurable batch size
-                            match storage.get_pending_jobs(10).await {  // ← Fetch up to 10 jobs
-                                Ok(jobs) => {
-                                    for job in jobs {
-                                        // Filter by name if specified
-                                        if !names.is_empty() && !names.contains(&job.name) {
-                                            continue;
-                                        }
-
-                                        // Try to claim the job
-                                        if let Ok(true) = storage.claim_job(&job.id, wid).await {
-                                            let proto_job = job_to_proto(&job);
-                                            debug!("Sending job {} ({}) to worker {}", job.id, job.name, wid);
-                                            match tx.send(Ok(proto_job)).await {
-                                                Ok(()) => {
-                                                    debug!("Successfully sent job {} to worker", job.id);
-                                                }
-                                                Err(_) => {
-                                                    error!(
-                                                        "Failed to send job {} ({}) to worker {}: Channel closed (receiver dropped)",
-                                                        job.id, job.name, wid
-                                                    );
-                                                    error!(
-                                                        "Worker {} disconnected while processing jobs. Remaining jobs will be retried.",
-                                                        wid
-                                                    );
-                                                    break;
-                                                }
-                                            }
-                                        } else {
-                                            debug!("Job {} was not claimed (already claimed or not pending)", job.id);
-                                        }
-                                    }
-                                }
-                                Err(e) => {
-                                    error!("Failed to get pending jobs: {}", e);
-                                }
-                            }
-                        }
+                    Some(Err(e)) => {
+                        warn!("Worker {} stream error: {}", worker_id, e);
+                        break;
                     }
-
-                    // Periodic poll every 100ms
-                    _ = tokio::time::sleep(tokio::time::Duration::from_millis(100)) => {
-                        if let Some(ref wid) = worker_id {
-                            //TODO: User configurable batch size
-                            match storage.get_pending_jobs(10).await {  // ← Fetch up to 10 jobs
-                                Ok(jobs) => {
-                                    for job in jobs {
-                                        if !names.is_empty() && !names.contains(&job.name) {
-                                            continue;
-                                        }
-
-                                        if let Ok(true) = storage.claim_job(&job.id, wid).await {
-                                            let proto_job = job_to_proto(&job);
-                                            debug!("Sending job {} ({}) to worker {} (periodic)", job.id, job.name, wid);
-                                            match tx.send(Ok(proto_job)).await {
-                                                Ok(()) => {
-                                                    debug!("Successfully sent job {} to worker (periodic)", job.id);
-                                                }
-                                                Err(_) => {
-                                                    error!(
-                                                        "Failed to send job {} ({}) to worker {} (periodic): Channel closed (receiver dropped)",
-                                                        job.id, job.name, wid
-                                                    );
-                                                    error!(
-                                                        "Worker {} disconnected during periodic poll. Remaining jobs will be retried.",
-                                                        wid
-                                                    );
-                                                    break;
-                                                }
-                                            }
-                                        } else {
-                                            debug!("Job {} was not claimed (already claimed or not pending)", job.id);
-                                        }
-                                    }
-                                }
-                                Err(e) => {
-                                    error!("Failed to get pending jobs: {}", e);
-                                }
-                            }
-                        }
+                    None => {
+                        info!("Worker {} disconnected", worker_id);
+                        break;
                     }
                 }
             }
+
+            // Worker disconnected - unregister and recover jobs
+            let active_jobs = registry.unregister(&worker_id).await;
+
+            // Reset active jobs to PENDING so they can be re-scheduled
+            for job_id in active_jobs {
+                match storage.reset_stale_job(&job_id).await {
+                    Ok(()) => {
+                        info!(
+                            "Reset orphaned job {} to PENDING after worker {} disconnect",
+                            job_id, worker_id
+                        );
+                    }
+                    Err(e) => {
+                        error!("Failed to reset orphaned job {}: {}", job_id, e);
+                    }
+                }
+            }
+
+            // Notify scheduler to re-process any reset jobs
+            scheduler_notify.notify_one();
         });
 
-        Ok(Response::new(Box::pin(ReceiverStream::new(rx))))
+        // Convert the receiver channel to a stream that sends proto::Job
+        let job_stream = ReceiverStream::new(rx).map(|job| Ok(job_to_proto(&job)));
+
+        Ok(Response::new(Box::pin(job_stream)))
     }
 
     async fn ack_job(&self, request: Request<AckRequest>) -> Result<Response<AckResponse>, Status> {
@@ -251,6 +249,9 @@ impl<S: Storage> Reseolio for ReseolioServer<S> {
         let result = req
             .result
             .ok_or_else(|| Status::invalid_argument("Missing result"))?;
+
+        // Mark job as completed in the registry (frees capacity)
+        self.registry.job_completed(&req.job_id).await;
 
         let job_result = if result.success {
             JobResult::Success {
@@ -274,6 +275,9 @@ impl<S: Storage> Reseolio for ReseolioServer<S> {
             .map_err(to_status)?;
 
         info!("Acked job {} -> {:?}", job.id, job.status);
+
+        // Notify scheduler that a worker has capacity again
+        self.scheduler_notify.notify_one();
 
         Ok(Response::new(AckResponse {
             new_status: status_to_proto(job.status) as i32,

@@ -10,7 +10,7 @@ import { spawn, ChildProcess } from 'node:child_process';
 
 const NUM_JOBS = 1000;
 const NUM_WORKERS = 5;
-const JOB_DURATION_MS = 100;
+const JOB_DURATION_MS = 10;
 
 async function startWorker(workerId: number): Promise<ChildProcess> {
     return new Promise((resolve, reject) => {

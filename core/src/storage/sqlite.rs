@@ -204,6 +204,43 @@ impl Storage for SqliteStorage {
         Ok(rows > 0)
     }
 
+    async fn claim_jobs(&self, claims: Vec<(String, String)>) -> Result<Vec<String>> {
+        let mut conn = self.conn.lock().await;
+        let now = Utc::now().timestamp();
+        let mut successfully_claimed = Vec::new();
+
+        let tx = conn.transaction().map_err(StorageError::from)?;
+
+        {
+            let mut stmt = tx
+                .prepare(
+                    r#"
+                    UPDATE jobs 
+                    SET status = 'RUNNING', 
+                        worker_id = ?2, 
+                        started_at = ?3,
+                        attempt = attempt + 1
+                    WHERE id = ?1 AND status = 'PENDING'
+                    "#,
+                )
+                .map_err(StorageError::from)?;
+
+            for (job_id, worker_id) in claims {
+                let rows = stmt
+                    .execute(params![job_id, worker_id, now])
+                    .map_err(StorageError::from)?;
+
+                if rows > 0 {
+                    successfully_claimed.push(job_id);
+                }
+            }
+        } // stmt dropped here
+
+        tx.commit().map_err(StorageError::from)?;
+
+        Ok(successfully_claimed)
+    }
+
     async fn update_job_result(&self, job_id: &str, result: JobResult) -> Result<InternalJob> {
         let conn = self.conn.lock().await;
         let now = Utc::now().timestamp();

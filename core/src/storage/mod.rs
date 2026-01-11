@@ -32,6 +32,10 @@ pub trait Storage: Clone + Send + Sync + 'static {
     /// Claim a job for processing (atomic: PENDING -> RUNNING)
     async fn claim_job(&self, job_id: &str, worker_id: &str) -> Result<bool>;
 
+    /// Batch claim jobs (atomic per job, single transaction)
+    /// Returns list of job IDs that were successfully claimed
+    async fn claim_jobs(&self, claims: Vec<(String, String)>) -> Result<Vec<String>>;
+
     /// Update job status after execution
     async fn update_job_result(&self, job_id: &str, result: JobResult) -> Result<InternalJob>;
 
