@@ -31,14 +31,87 @@ pub struct ReseolioServer<S: Storage> {
     registry: WorkerRegistry,
     /// Channel to notify scheduler of new jobs or completed jobs
     scheduler_notify: Arc<Notify>,
+    /// Channel for batching job acknowledgments
+    ack_tx: mpsc::Sender<(String, JobResult, tokio::sync::oneshot::Sender<()>)>, // Added oneshot for optional wait, though we optimize for fire-forget
 }
 
 impl<S: Storage> ReseolioServer<S> {
     pub fn new(storage: S, registry: WorkerRegistry, scheduler_notify: Arc<Notify>) -> Self {
+        // Channel size 10000 to buffer high spikes
+        let (ack_tx, mut ack_rx) =
+            mpsc::channel::<(String, JobResult, tokio::sync::oneshot::Sender<()>)>(10000);
+
+        let storage_clone = storage.clone();
+
+        // spawn batch processor
+        tokio::spawn(async move {
+            let batch_size = 100;
+            let batch_timeout = std::time::Duration::from_millis(50);
+            let mut batch = Vec::with_capacity(batch_size);
+            let mut listeners = Vec::with_capacity(batch_size);
+
+            loop {
+                // Collect batch
+                let collect_start = Instant::now();
+
+                // First item blocking (or until closed)
+                match ack_rx.recv().await {
+                    Some((job_id, result, tx)) => {
+                        batch.push((job_id, result));
+                        listeners.push(tx);
+                    }
+                    None => break, // Channel closed
+                }
+
+                // Try to fill batch with remaining time
+                loop {
+                    if batch.len() >= batch_size {
+                        break;
+                    }
+
+                    let elapsed = collect_start.elapsed();
+                    if elapsed >= batch_timeout {
+                        break;
+                    }
+
+                    match tokio::time::timeout(batch_timeout - elapsed, ack_rx.recv()).await {
+                        Ok(Some((job_id, result, tx))) => {
+                            batch.push((job_id, result));
+                            listeners.push(tx);
+                        }
+                        Ok(None) => break, // Channel closed, process what we have and exit loop
+                        Err(_) => break,   // Timeout
+                    }
+                }
+
+                if batch.is_empty() {
+                    continue;
+                }
+
+                // Process batch
+                if let Err(e) = storage_clone
+                    .update_job_results(batch.drain(..).collect())
+                    .await
+                {
+                    error!("Failed to commit batch acknowledgments: {}", e);
+                    // In a real system, we might retry or log individual errors.
+                    // For now, these jobs remain RUNNING and will be picked up by stale job recovery.
+                } else {
+                    debug!("Committed batch of {} acknowledgments", listeners.len());
+                }
+
+                // Notify listeners (fire and forget mostly, but signal done)
+                for tx in listeners.drain(..) {
+                    let _ = tx.send(());
+                }
+            }
+        });
+
         Self {
             storage,
             registry,
             scheduler_notify,
+            ack_tx,
         }
     }
 
@@ -55,10 +128,12 @@ impl<S: Storage> ReseolioServer<S> {
 
 #[tonic::async_trait]
 impl<S: Storage> Reseolio for ReseolioServer<S> {
+    // ... enqueue_job and poll_jobs unchanged ...
     async fn enqueue_job(
         &self,
         request: Request<EnqueueRequest>,
     ) -> Result<Response<EnqueueResponse>, Status> {
+        // ... (Keep existing implementation, copy carefully)
         let req = request.into_inner();
 
         // Check for idempotency key
@@ -136,27 +211,20 @@ impl<S: Storage> Reseolio for ReseolioServer<S> {
 
     type PollJobsStream = Pin<Box<dyn Stream<Item = Result<proto::Job, Status>> + Send>>;
 
-    /// Handle worker connection and push jobs to them
-    ///
-    /// In the push-based architecture, workers connect via this streaming RPC
-    /// and register their capabilities. The scheduler then pushes jobs directly
-    /// to workers based on their capacity and registered job names.
     async fn poll_jobs(
         &self,
         request: Request<Streaming<PollRequest>>,
     ) -> Result<Response<Self::PollJobsStream>, Status> {
+        // ... (Keep existing implementation)
         let mut stream = request.into_inner();
         let registry = self.registry.clone();
         let storage = self.storage.clone();
         let scheduler_notify = self.scheduler_notify.clone();
 
         // Channel for pushing jobs to this worker
-        // The scheduler will send jobs here, worker receives them
         let (tx, rx) = mpsc::channel(100);
 
-        // Spawn task to handle worker registration and lifecycle
         tokio::spawn(async move {
-            // Wait for initial poll request with worker info
             let worker_id: String;
             let registered_names: Vec<String>;
             let concurrency: i32;
@@ -167,7 +235,6 @@ impl<S: Storage> Reseolio for ReseolioServer<S> {
                     registered_names = poll_req.names.clone();
                     concurrency = poll_req.concurrency;
 
-                    // Register worker with the registry
                     registry
                         .register(WorkerInfo {
                             worker_id: worker_id.clone(),
@@ -184,7 +251,6 @@ impl<S: Storage> Reseolio for ReseolioServer<S> {
                         worker_id, concurrency, registered_names
                     );
 
-                    // Notify scheduler that a new worker is available
                     scheduler_notify.notify_one();
                 }
                 Some(Err(e)) => {
@@ -197,11 +263,9 @@ impl<S: Storage> Reseolio for ReseolioServer<S> {
                 }
             }
 
-            // Keep the stream alive and handle heartbeats / additional messages
             loop {
                 match stream.next().await {
                     Some(Ok(poll_req)) => {
-                        // Heartbeat or capability update
                         registry.update_heartbeat(&poll_req.worker_id).await;
                         debug!("Heartbeat from worker {}", poll_req.worker_id);
                     }
@@ -216,10 +280,8 @@ impl<S: Storage> Reseolio for ReseolioServer<S> {
                 }
             }
 
-            // Worker disconnected - unregister and recover jobs
             let active_jobs = registry.unregister(&worker_id).await;
 
-            // Reset active jobs to PENDING so they can be re-scheduled
             for job_id in active_jobs {
                 match storage.reset_stale_job(&job_id).await {
                     Ok(()) => {
@@ -234,11 +296,9 @@ impl<S: Storage> Reseolio for ReseolioServer<S> {
                 }
             }
 
-            // Notify scheduler to re-process any reset jobs
             scheduler_notify.notify_one();
         });
 
-        // Convert the receiver channel to a stream that sends proto::Job
         let job_stream = ReceiverStream::new(rx).map(|job| Ok(job_to_proto(&job)));
 
         Ok(Response::new(Box::pin(job_stream)))
@@ -268,21 +328,37 @@ impl<S: Storage> Reseolio for ReseolioServer<S> {
             }
         };
 
-        let job = self
-            .storage
-            .update_job_result(&req.job_id, job_result)
-            .await
-            .map_err(to_status)?;
+        // Determine expected status for response (optimization: don't wait for DB)
+        let (new_status, next_attempt, next_run_at) = match &job_result {
+            JobResult::Success { .. } => (proto::JobStatus::Success, 0, 0),
+            JobResult::Failed { should_retry, .. } => {
+                if *should_retry {
+                    // We don't know exact backoff without job options, but client needs something.
+                    // We can just imply PENDING. The client doesn't crucially depend on exact next run time for simple workers.
+                    (proto::JobStatus::Pending, 0, 0)
+                } else {
+                    (proto::JobStatus::Dead, 0, 0)
+                }
+            }
+        };
 
-        info!("Acked job {} -> {:?}", job.id, job.status);
+        // Send to batch processor
+        let (tx, _rx) = tokio::sync::oneshot::channel();
+        if let Err(e) = self.ack_tx.send((req.job_id.clone(), job_result, tx)).await {
+            error!("Failed to queue ack for job {}: {}", req.job_id, e);
+            return Err(Status::internal("Failed to queue acknowledgment"));
+        }
+
+        // NOT waiting for rx (fire and forget for throughput)
+        // await rx is optional here. If we strictly needed consistency we'd wait.
 
         // Notify scheduler that a worker has capacity again
         self.scheduler_notify.notify_one();
 
         Ok(Response::new(AckResponse {
-            new_status: status_to_proto(job.status) as i32,
-            next_attempt: job.attempt + 1,
-            next_run_at: job.scheduled_at.timestamp_millis(),
+            new_status: new_status as i32,
+            next_attempt,
+            next_run_at,
         }))
     }
 

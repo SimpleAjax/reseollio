@@ -39,6 +39,9 @@ pub trait Storage: Clone + Send + Sync + 'static {
     /// Update job status after execution
     async fn update_job_result(&self, job_id: &str, result: JobResult) -> Result<InternalJob>;
 
+    /// Batch update job results (atomic transaction)
+    async fn update_job_results(&self, updates: Vec<(String, JobResult)>) -> Result<()>;
+
     /// Mark job as dead (exceeded max attempts)
     async fn mark_job_dead(&self, job_id: &str, error: &str) -> Result<InternalJob>;
 

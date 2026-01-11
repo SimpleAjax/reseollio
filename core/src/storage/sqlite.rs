@@ -241,8 +241,114 @@ impl Storage for SqliteStorage {
         Ok(successfully_claimed)
     }
 
+    async fn update_job_results(&self, updates: Vec<(String, JobResult)>) -> Result<()> {
+        let mut conn = self.conn.lock().await;
+        let now = Utc::now().timestamp();
+
+        let tx = conn.transaction().map_err(StorageError::from)?;
+
+        {
+            // Prepare statements for Success, Retry, and Dead updates
+            let mut stmt_success = tx
+                .prepare(
+                    r#"
+                    UPDATE jobs 
+                    SET status = 'SUCCESS', 
+                        completed_at = ?2,
+                        result = ?3,
+                        error = NULL
+                    WHERE id = ?1
+                    "#,
+                )
+                .map_err(StorageError::from)?;
+
+            let mut stmt_retry = tx
+                .prepare(
+                    r#"
+                    UPDATE jobs 
+                    SET status = 'PENDING', 
+                        scheduled_at = ?2,
+                        error = ?3,
+                        worker_id = NULL,
+                        started_at = NULL
+                    WHERE id = ?1
+                    "#,
+                )
+                .map_err(StorageError::from)?;
+
+            let mut stmt_dead = tx
+                .prepare(
+                    r#"
+                    UPDATE jobs 
+                    SET status = 'DEAD', 
+                        completed_at = ?2,
+                        error = ?3
+                    WHERE id = ?1
+                    "#,
+                )
+                .map_err(StorageError::from)?;
+
+            // We need to fetch job info for retries.
+            // Since we can't easily interleave SELECT and UPDATE on the same transaction
+            // with prepared statements in this loop structure without complexity,
+            // AND we already have the job ID, we optimally just need the 'options' and 'attempt' count.
+            // For now, to keep it correct and robust, we'll do a quick SELECT for failed jobs.
+            // This is still MUCH faster than separate transactions.
+            let mut stmt_get_job = tx
+                .prepare("SELECT options, attempt FROM jobs WHERE id = ?1")
+                .map_err(StorageError::from)?;
+
+            for (job_id, result) in updates {
+                match result {
+                    JobResult::Success { return_value } => {
+                        stmt_success
+                            .execute(params![job_id, now, return_value])
+                            .map_err(StorageError::from)?;
+                    }
+                    JobResult::Failed {
+                        error,
+                        should_retry,
+                    } => {
+                        // We need job details to calculate backoff
+                        let job_row = stmt_get_job
+                            .query_row(params![job_id], |row| {
+                                let options_str: String = row.get(0)?;
+                                let options: JobOptions =
+                                    serde_json::from_str(&options_str).unwrap_or_default();
+                                let attempt: i32 = row.get(1)?;
+                                Ok((options, attempt))
+                            })
+                            .optional()
+                            .map_err(StorageError::from)?;
+
+                        if let Some((options, attempt)) = job_row {
+                            if should_retry && attempt < options.max_attempts {
+                                // Schedule retry
+                                let delay = calculate_backoff(&options, attempt);
+                                let next_run = now + delay as i64;
+                                stmt_retry
+                                    .execute(params![job_id, next_run, &error])
+                                    .map_err(StorageError::from)?;
+                            } else {
+                                // Mark dead
+                                stmt_dead
+                                    .execute(params![job_id, now, &error])
+                                    .map_err(StorageError::from)?;
+                            }
+                        }
+                    }
+                }
+            }
+        } // Drop statements
+
+        tx.commit().map_err(StorageError::from)?;
+
+        Ok(())
+    }
+
     async fn update_job_result(&self, job_id: &str, result: JobResult) -> Result<InternalJob> {
         let conn = self.conn.lock().await;
+        // ... (existing implementation)
         let now = Utc::now().timestamp();
 
         match result {
