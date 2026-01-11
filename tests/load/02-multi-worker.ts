@@ -48,7 +48,7 @@ async function main() {
 
     // Create coordinator client (just for enqueuing)
     const coordinator = new Reseolio({
-        storage: 'sqlite://./load-test.db',
+        storage: process.env.RESEOLIO_DB || 'sqlite://./load-test.db',
         autoStart: false,
         workerConcurrency: 0, // Not processing, just enqueuing
     });

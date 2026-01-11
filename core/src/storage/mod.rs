@@ -3,9 +3,13 @@
 //! This module provides the storage abstraction and SQLite implementation.
 
 mod models;
+#[cfg(feature = "postgres")]
+mod postgres;
 mod sqlite;
 
 pub use models::*;
+#[cfg(feature = "postgres")]
+pub use postgres::PostgresStorage;
 pub use sqlite::SqliteStorage;
 
 use crate::error::Result;
@@ -56,4 +60,33 @@ pub trait Storage: Clone + Send + Sync + 'static {
 
     /// List jobs with filters
     async fn list_jobs(&self, filter: JobFilter) -> Result<(Vec<InternalJob>, i32)>;
+}
+
+/// Convert unix timestamp to DateTime<Utc>
+pub fn timestamp_to_datetime(ts: i64) -> chrono::DateTime<chrono::Utc> {
+    use chrono::TimeZone;
+    chrono::Utc.timestamp_opt(ts, 0).unwrap()
+}
+
+/// Calculate backoff delay in seconds based on strategy
+pub fn calculate_backoff(options: &JobOptions, attempt: i32) -> i32 {
+    let base_delay = match options.backoff {
+        BackoffStrategy::Fixed => options.initial_delay_ms,
+        BackoffStrategy::Exponential => options.initial_delay_ms * 2_i32.pow(attempt as u32 - 1),
+        BackoffStrategy::Linear => options.initial_delay_ms * attempt,
+    };
+
+    // Apply max delay cap
+    let capped = base_delay.min(options.max_delay_ms);
+
+    // Apply jitter
+    if options.jitter > 0.0 {
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
+        let jitter_range = (capped as f32 * options.jitter) as i32;
+        let jitter = rng.gen_range(-jitter_range..=jitter_range);
+        (capped + jitter).max(0) / 1000 // Convert to seconds
+    } else {
+        capped / 1000
+    }
 }

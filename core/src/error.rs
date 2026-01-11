@@ -35,6 +35,10 @@ pub enum StorageError {
 
     #[error("Connection pool error: {0}")]
     Pool(String),
+
+    #[cfg(feature = "postgres")]
+    #[error("Postgres error: {0}")]
+    Postgres(#[from] sqlx::Error),
 }
 
 pub type Result<T> = std::result::Result<T, ReseolioError>;

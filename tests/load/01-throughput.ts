@@ -19,7 +19,7 @@ async function main() {
     console.log(`Workers:      1\n`);
 
     const reseolio = new Reseolio({
-        storage: 'sqlite://./load-test.db',
+        storage: process.env.RESEOLIO_DB || 'sqlite://./load-test.db',
         autoStart: false,
     });
 

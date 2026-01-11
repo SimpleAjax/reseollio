@@ -60,15 +60,17 @@ use tracing_subscriber::FmtSubscriber;
 #[command(name = "reseolio")]
 #[command(author, version, about, long_about = None)]
 struct Config {
-    /// Path to SQLite database file
+    /// Connection string for storage.
+    /// Supports 'sqlite://path/to/db' or 'postgres://user:pass@host/db'.
+    /// Default matches file path behavior for backward compat if no prefix.
     #[arg(
         short = 'd',
         long,
         env = "RESEOLIO_DB",
-        default_value = "reseolio.db",
-        help = "Path to SQLite database file"
+        default_value = "sqlite://reseolio.db",
+        help = "Database connection string (sqlite:// or postgres://)"
     )]
-    database_path: PathBuf,
+    database_url: String,
 
     /// Address to bind the gRPC server to
     #[arg(
@@ -111,23 +113,10 @@ struct Config {
     batch_size: usize,
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize logging
-    let _subscriber = FmtSubscriber::builder()
-        .with_max_level(Level::INFO)
-        .json()
-        .init();
-
-    info!("Starting Reseolio Core v{}", env!("CARGO_PKG_VERSION"));
-
-    // Parse configuration from CLI args and environment variables
-    let config = Config::parse();
-
-    // Initialize storage
-    let storage = storage::SqliteStorage::new(&config.database_path).await?;
-    info!("Storage initialized: {}", config.database_path.display());
-
+async fn run_with_storage<S: Storage>(
+    config: Config,
+    storage: S,
+) -> Result<(), Box<dyn std::error::Error>> {
     // Run migrations
     storage.migrate().await?;
     info!("Database migrations complete");
@@ -161,6 +150,44 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     scheduler_handle.abort();
     info!("Reseolio Core shutdown complete");
+
+    Ok(())
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize logging
+    let _subscriber = FmtSubscriber::builder()
+        .with_max_level(Level::INFO)
+        .json()
+        .init();
+
+    info!("Starting Reseolio Core v{}", env!("CARGO_PKG_VERSION"));
+
+    // Parse configuration from CLI args and environment variables
+    let config = Config::parse();
+
+    if config.database_url.starts_with("postgres://") {
+        #[cfg(feature = "postgres")]
+        {
+            let storage = storage::PostgresStorage::new(&config.database_url).await?;
+            info!("Initialized PostgreSQL storage");
+            run_with_storage(config, storage).await?;
+        }
+        #[cfg(not(feature = "postgres"))]
+        {
+            return Err("PostgreSQL support not enabled. Compile with --features postgres".into());
+        }
+    } else {
+        // Assume SQLite
+        let path_str = config.database_url.trim_start_matches("sqlite://");
+        let path = PathBuf::from(path_str);
+
+        // Handle explicit sqlite:// or implicit file path
+        let storage = storage::SqliteStorage::new(&path).await?;
+        info!("Initialized SQLite storage: {}", path.display());
+        run_with_storage(config, storage).await?;
+    }
 
     Ok(())
 }

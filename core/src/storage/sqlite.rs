@@ -1,9 +1,12 @@
 //! SQLite storage implementation
 
-use super::{InternalJob, JobFilter, JobOptions, JobResult, JobStatus, NewJob, Storage};
+use super::{
+    calculate_backoff, timestamp_to_datetime, InternalJob, JobFilter, JobOptions, JobResult,
+    JobStatus, NewJob, Storage,
+};
 use crate::error::{ReseolioError, Result, StorageError};
 use async_trait::async_trait;
-use chrono::{DateTime, TimeZone, Utc};
+use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
 use std::path::Path;
 use std::sync::Arc;
@@ -592,33 +595,4 @@ fn row_to_job(row: &rusqlite::Row) -> rusqlite::Result<InternalJob> {
         worker_id: row.get(12)?,
         idempotency_key: row.get(13)?,
     })
-}
-
-fn timestamp_to_datetime(ts: i64) -> DateTime<Utc> {
-    Utc.timestamp_opt(ts, 0).unwrap()
-}
-
-/// Calculate backoff delay in seconds based on strategy
-fn calculate_backoff(options: &JobOptions, attempt: i32) -> i32 {
-    use super::BackoffStrategy;
-
-    let base_delay = match options.backoff {
-        BackoffStrategy::Fixed => options.initial_delay_ms,
-        BackoffStrategy::Exponential => options.initial_delay_ms * 2_i32.pow(attempt as u32 - 1),
-        BackoffStrategy::Linear => options.initial_delay_ms * attempt,
-    };
-
-    // Apply max delay cap
-    let capped = base_delay.min(options.max_delay_ms);
-
-    // Apply jitter
-    if options.jitter > 0.0 {
-        use rand::Rng;
-        let mut rng = rand::thread_rng();
-        let jitter_range = (capped as f32 * options.jitter) as i32;
-        let jitter = rng.gen_range(-jitter_range..=jitter_range);
-        (capped + jitter).max(0) / 1000 // Convert to seconds
-    } else {
-        capped / 1000
-    }
 }

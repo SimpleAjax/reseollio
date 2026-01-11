@@ -9,7 +9,7 @@ const jobDuration = parseInt(process.env.JOB_DURATION || '100', 10);
 
 async function main() {
     const reseolio = new Reseolio({
-        storage: 'sqlite://./load-test.db',
+        storage: process.env.RESEOLIO_DB || 'sqlite://./load-test.db',
         autoStart: false,
         workerConcurrency: 3,
     });

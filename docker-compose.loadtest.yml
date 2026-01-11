@@ -1,17 +1,36 @@
 services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: reseolio-loadtest-postgres
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: reseolio
+    # Expose port even if just for debugging, but internal network handles comms
+    ports:
+      - "5433:5432" 
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d reseolio"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - postgres-test-data:/var/lib/postgresql/data
+
   loadtest:
     build:
       context: .
       dockerfile: Dockerfile.loadtest
     container_name: reseolio-loadtest
+    depends_on:
+      postgres:
+        condition: service_healthy
     volumes:
-      # Mount test results directory
       - ./test-results:/data
     environment:
       - NODE_ENV=test
       - RESEOLIO_LOG_LEVEL=info
-    # Override command to run specific test
-    # Use: docker-compose -f docker-compose.loadtest.yml run loadtest <command>
+      - RESEOLIO_DB=postgres://user:password@postgres:5432/reseolio
     command: >
       sh -c "
         echo '==> Starting Reseolio server...' &&
@@ -28,8 +47,15 @@ services:
       context: .
       dockerfile: Dockerfile.loadtest
     container_name: reseolio-throughput-test
+    depends_on:
+      postgres:
+        condition: service_healthy
     volumes:
       - ./test-results:/data
+    environment:
+      - NODE_ENV=test
+      - RESEOLIO_LOG_LEVEL=info
+      - RESEOLIO_DB=postgres://user:password@postgres:5432/reseolio
     command: >
       sh -c "
         reseolio &
@@ -42,8 +68,15 @@ services:
       context: .
       dockerfile: Dockerfile.loadtest
     container_name: reseolio-multi-worker-test
+    depends_on:
+      postgres:
+        condition: service_healthy
     volumes:
       - ./test-results:/data
+    environment:
+      - NODE_ENV=test
+      - RESEOLIO_LOG_LEVEL=info
+      - RESEOLIO_DB=postgres://user:password@postgres:5432/reseolio
     command: >
       sh -c "
         reseolio &
@@ -56,8 +89,15 @@ services:
       context: .
       dockerfile: Dockerfile.loadtest
     container_name: reseolio-retry-storm-test
+    depends_on:
+      postgres:
+        condition: service_healthy
     volumes:
       - ./test-results:/data
+    environment:
+      - NODE_ENV=test
+      - RESEOLIO_LOG_LEVEL=info
+      - RESEOLIO_DB=postgres://user:password@postgres:5432/reseolio
     command: >
       sh -c "
         reseolio &
@@ -71,8 +111,15 @@ services:
       context: .
       dockerfile: Dockerfile.loadtest
     container_name: reseolio-all-tests
+    depends_on:
+      postgres:
+        condition: service_healthy
     volumes:
       - ./test-results:/data
+    environment:
+      - NODE_ENV=test
+      - RESEOLIO_LOG_LEVEL=info
+      - RESEOLIO_DB=postgres://user:password@postgres:5432/reseolio
     command: >
       sh -c "
         reseolio &
@@ -95,9 +142,16 @@ services:
       context: .
       dockerfile: Dockerfile.loadtest
     container_name: reseolio-dev
+    depends_on:
+      postgres:
+        condition: service_healthy
     volumes:
       - ./test-results:/data
       - ./tests:/app/tests  # Mount tests for live editing
+    environment:
+      - NODE_ENV=test
+      - RESEOLIO_LOG_LEVEL=info
+      - RESEOLIO_DB=postgres://user:password@postgres:5432/reseolio
     stdin_open: true
     tty: true
     command: >
@@ -106,9 +160,11 @@ services:
         reseolio &
         sleep 2 &&
         echo '==> Server ready! Container will stay alive.' &&
-        echo '==> Database in container: /app/reseolio.db' &&
-        echo '==> To copy DB: docker cp reseolio-dev:/app/reseolio.db ./db-data/' &&
+        echo '==> Database: postgres://user:password@postgres:5432/reseolio' &&
         echo '==> Run tests with: tsx tests/load/02-multi-worker.ts' &&
         echo '' &&
         tail -f /dev/null
       "
+
+volumes:
+  postgres-test-data:

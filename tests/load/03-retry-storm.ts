@@ -17,7 +17,7 @@ async function main() {
     console.log(`   Max attempts: 3\n`);
 
     const reseolio = new Reseolio({
-        storage: 'sqlite://./load-test.db',
+        storage: process.env.RESEOLIO_DB || 'sqlite://./load-test.db',
         autoStart: false,
     });
 
