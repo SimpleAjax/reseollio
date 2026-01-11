@@ -106,6 +106,8 @@ services:
         reseolio &
         sleep 2 &&
         echo '==> Server ready! Container will stay alive.' &&
+        echo '==> Database in container: /app/reseolio.db' &&
+        echo '==> To copy DB: docker cp reseolio-dev:/app/reseolio.db ./db-data/' &&
         echo '==> Run tests with: tsx tests/load/02-multi-worker.ts' &&
         echo '' &&
         tail -f /dev/null
