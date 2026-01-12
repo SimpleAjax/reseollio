@@ -124,7 +124,7 @@ async function main() {
         const noDuplicates = !hasDuplicates;
 
         // We have 6 workers total: 5 spawned + 1 coordinator (labeled "unknown")
-        // Coordinator has concurrency=1, others have concurrency=3
+        // Coordinator has concurrency=1, others have concurrency=6
         // So we expect uneven distribution, but each worker should get SOME work
         const totalWorkers = workerCounts.size;
         const minJobsPerWorker = Math.floor(NUM_JOBS / totalWorkers) * 0.3; // At least 30% of fair share

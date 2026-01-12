@@ -11,7 +11,7 @@ async function main() {
     const reseolio = new Reseolio({
         storage: process.env.RESEOLIO_DB || 'sqlite://./load-test.db',
         autoStart: false,
-        workerConcurrency: 3,
+        workerConcurrency: 6,  // Doubled for throughput test
     });
 
     let jobsProcessed = 0;
