@@ -212,35 +212,138 @@ impl Storage for PostgresStorage {
     }
 
     async fn claim_jobs(&self, claims: Vec<(String, String)>) -> Result<Vec<String>> {
-        let now = Utc::now().timestamp();
-        let mut successfully_claimed = Vec::new();
-        let mut tx = self.pool.begin().await.map_err(StorageError::from)?;
+        use std::time::Instant;
 
-        for (job_id, worker_id) in claims {
-            let result = sqlx::query(
-                r#"
-                UPDATE jobs 
-                SET status = 'RUNNING', 
-                    worker_id = $2, 
-                    started_at = $3,
-                    attempt = attempt + 1
-                WHERE id = $1 AND status = 'PENDING'
-                "#,
-            )
-            .bind(&job_id)
-            .bind(&worker_id)
-            .bind(now)
-            .execute(&mut *tx)
-            .await
-            .map_err(StorageError::from)?;
-
-            if result.rows_affected() > 0 {
-                successfully_claimed.push(job_id);
-            }
+        if claims.is_empty() {
+            return Ok(Vec::new());
         }
 
-        tx.commit().await.map_err(StorageError::from)?;
-        Ok(successfully_claimed)
+        let claim_start = Instant::now();
+        let now = Utc::now().timestamp();
+        let n = claims.len();
+
+        // Separate job_ids and worker_ids into two arrays
+        let mut job_ids: Vec<String> = Vec::with_capacity(n);
+        let mut worker_ids: Vec<String> = Vec::with_capacity(n);
+
+        for (job_id, worker_id) in claims {
+            job_ids.push(job_id);
+            worker_ids.push(worker_id);
+        }
+
+        // Use UNNEST with two arrays instead of dynamic VALUES clause
+        // This is a fixed query that PostgreSQL can cache/prepare
+        let rows = sqlx::query(
+            r#"
+            UPDATE jobs 
+            SET status = 'RUNNING', 
+                worker_id = v.worker_id, 
+                started_at = $1,
+                attempt = attempt + 1
+            FROM UNNEST($2::TEXT[], $3::TEXT[]) AS v(job_id, worker_id)
+            WHERE jobs.id = v.job_id AND jobs.status = 'PENDING'
+            RETURNING jobs.id
+            "#,
+        )
+        .bind(now)
+        .bind(&job_ids)
+        .bind(&worker_ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(StorageError::from)?;
+
+        let claimed: Vec<String> = rows.iter().map(|r| r.get::<String, _>("id")).collect();
+
+        let claim_time = claim_start.elapsed();
+        info!(
+            "[TIMING] claim_jobs: count={} claimed={} time={}ms",
+            n,
+            claimed.len(),
+            claim_time.as_millis()
+        );
+
+        Ok(claimed)
+    }
+
+    async fn claim_and_fetch_jobs(
+        &self,
+        worker_id: &str,
+        job_names: &[String],
+        limit: usize,
+    ) -> Result<Vec<InternalJob>> {
+        let now = Utc::now().timestamp();
+
+        // Use CTE with FOR UPDATE SKIP LOCKED for efficient concurrent claiming
+        // This is the gold standard for PostgreSQL job queues
+        let rows = if job_names.is_empty() {
+            // Claim any pending job
+            sqlx::query(
+                r#"
+                WITH claimable AS (
+                    SELECT id FROM jobs
+                    WHERE status = 'PENDING' AND scheduled_at <= $1
+                    ORDER BY scheduled_at
+                    LIMIT $2
+                    FOR UPDATE SKIP LOCKED
+                )
+                UPDATE jobs
+                SET status = 'RUNNING',
+                    worker_id = $3,
+                    started_at = $1,
+                    attempt = attempt + 1
+                WHERE id IN (SELECT id FROM claimable)
+                RETURNING id, name, args, options, status, attempt,
+                          created_at, scheduled_at, started_at, completed_at,
+                          error, result, worker_id, idempotency_key
+                "#,
+            )
+            .bind(now)
+            .bind(limit as i64)
+            .bind(worker_id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(StorageError::from)?
+        } else {
+            // Claim jobs matching specific names
+            sqlx::query(
+                r#"
+                WITH claimable AS (
+                    SELECT id FROM jobs
+                    WHERE status = 'PENDING' 
+                      AND scheduled_at <= $1 
+                      AND name = ANY($4)
+                    ORDER BY scheduled_at
+                    LIMIT $2
+                    FOR UPDATE SKIP LOCKED
+                )
+                UPDATE jobs
+                SET status = 'RUNNING',
+                    worker_id = $3,
+                    started_at = $1,
+                    attempt = attempt + 1
+                WHERE id IN (SELECT id FROM claimable)
+                RETURNING id, name, args, options, status, attempt,
+                          created_at, scheduled_at, started_at, completed_at,
+                          error, result, worker_id, idempotency_key
+                "#,
+            )
+            .bind(now)
+            .bind(limit as i64)
+            .bind(worker_id)
+            .bind(job_names)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(StorageError::from)?
+        };
+
+        let mut jobs = Vec::with_capacity(rows.len());
+        for row in rows {
+            jobs.push(row_to_job(&row)?);
+        }
+
+        debug!("Worker {} claimed {} jobs via pull", worker_id, jobs.len());
+
+        Ok(jobs)
     }
 
     async fn update_job_result(&self, job_id: &str, result: JobResult) -> Result<InternalJob> {
@@ -321,90 +424,158 @@ impl Storage for PostgresStorage {
     }
 
     async fn update_job_results(&self, updates: Vec<(String, JobResult)>) -> Result<()> {
+        use std::time::Instant;
+
+        if updates.is_empty() {
+            return Ok(());
+        }
+
+        let total_start = Instant::now();
         let now = Utc::now().timestamp();
-        let mut tx = self.pool.begin().await.map_err(StorageError::from)?;
+
+        // Separate SUCCESS results (can be batched) from FAILED results (need individual handling)
+        let mut success_ids: Vec<String> = Vec::new();
+        let mut success_results: Vec<Option<Vec<u8>>> = Vec::new();
+        let mut failed_updates: Vec<(String, String, bool)> = Vec::new(); // (job_id, error, should_retry)
 
         for (job_id, result) in updates {
             match result {
                 JobResult::Success { return_value } => {
-                    sqlx::query(
-                        r#"
-                        UPDATE jobs 
-                        SET status = 'SUCCESS', 
-                            completed_at = $2,
-                            result = $3,
-                            error = NULL
-                        WHERE id = $1
-                        "#,
-                    )
-                    .bind(&job_id)
-                    .bind(now)
-                    .bind(return_value)
-                    .execute(&mut *tx)
-                    .await
-                    .map_err(StorageError::from)?;
+                    success_ids.push(job_id);
+                    success_results.push(return_value);
                 }
                 JobResult::Failed {
                     error,
                     should_retry,
                 } => {
-                    // Fetch job details for backoff calculation
-                    let row = sqlx::query("SELECT options, attempt FROM jobs WHERE id = $1")
-                        .bind(&job_id)
-                        .fetch_optional(&mut *tx)
-                        .await
-                        .map_err(StorageError::from)?;
-
-                    if let Some(row) = row {
-                        let options_str: String = row.get(0);
-                        let options: JobOptions =
-                            serde_json::from_str(&options_str).unwrap_or_default();
-                        let attempt: i32 = row.get(1);
-
-                        if should_retry && attempt < options.max_attempts {
-                            let delay = calculate_backoff(&options, attempt);
-                            let next_run = now + delay as i64;
-
-                            sqlx::query(
-                                r#"
-                                UPDATE jobs 
-                                SET status = 'PENDING', 
-                                    scheduled_at = $2,
-                                    error = $3,
-                                    worker_id = NULL,
-                                    started_at = NULL
-                                WHERE id = $1
-                                "#,
-                            )
-                            .bind(&job_id)
-                            .bind(next_run)
-                            .bind(&error)
-                            .execute(&mut *tx)
-                            .await
-                            .map_err(StorageError::from)?;
-                        } else {
-                            sqlx::query(
-                                r#"
-                                UPDATE jobs 
-                                SET status = 'DEAD', 
-                                    completed_at = $2,
-                                    error = $3
-                                WHERE id = $1
-                                "#,
-                            )
-                            .bind(&job_id)
-                            .bind(now)
-                            .bind(&error)
-                            .execute(&mut *tx)
-                            .await
-                            .map_err(StorageError::from)?;
-                        }
-                    }
+                    failed_updates.push((job_id, error, should_retry));
                 }
             }
         }
 
-        tx.commit().await.map_err(StorageError::from)?;
+        let success_count = success_ids.len();
+        let failed_count = failed_updates.len();
+
+        // Batch update all SUCCESS jobs in a single query using UPDATE FROM VALUES
+        let success_time = if !success_ids.is_empty() {
+            let n = success_ids.len();
+            let success_start = Instant::now();
+
+            // Build VALUES clause: ($1, $2), ($3, $4), ...
+            let mut values_parts = Vec::with_capacity(n);
+            for i in 0..n {
+                let id_param = i * 2 + 1;
+                let result_param = i * 2 + 2;
+                values_parts.push(format!("(${}::TEXT, ${}::BYTEA)", id_param, result_param));
+            }
+
+            let query_str = format!(
+                r#"
+                UPDATE jobs 
+                SET status = 'SUCCESS', 
+                    completed_at = {},
+                    result = v.result_value,
+                    error = NULL
+                FROM (VALUES {}) AS v(job_id, result_value)
+                WHERE jobs.id = v.job_id
+                "#,
+                now,
+                values_parts.join(", ")
+            );
+
+            let mut query = sqlx::query(&query_str);
+            for i in 0..n {
+                query = query.bind(&success_ids[i]);
+                query = query.bind(&success_results[i]);
+            }
+
+            query
+                .execute(&self.pool)
+                .await
+                .map_err(StorageError::from)?;
+
+            success_start.elapsed()
+        } else {
+            std::time::Duration::ZERO
+        };
+
+        // Handle FAILED jobs individually (need backoff calculation per job)
+        let failed_time = if !failed_updates.is_empty() {
+            let failed_start = Instant::now();
+            let mut tx = self.pool.begin().await.map_err(StorageError::from)?;
+
+            for (job_id, error, should_retry) in failed_updates {
+                // Fetch job details for backoff calculation
+                let row = sqlx::query("SELECT options, attempt FROM jobs WHERE id = $1")
+                    .bind(&job_id)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(StorageError::from)?;
+
+                if let Some(row) = row {
+                    let options_str: String = row.get(0);
+                    let options: JobOptions =
+                        serde_json::from_str(&options_str).unwrap_or_default();
+                    let attempt: i32 = row.get(1);
+
+                    if should_retry && attempt < options.max_attempts {
+                        let delay = calculate_backoff(&options, attempt);
+                        let next_run = now + delay as i64;
+
+                        sqlx::query(
+                            r#"
+                            UPDATE jobs 
+                            SET status = 'PENDING', 
+                                scheduled_at = $2,
+                                error = $3,
+                                worker_id = NULL,
+                                started_at = NULL
+                            WHERE id = $1
+                            "#,
+                        )
+                        .bind(&job_id)
+                        .bind(next_run)
+                        .bind(&error)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(StorageError::from)?;
+                    } else {
+                        sqlx::query(
+                            r#"
+                            UPDATE jobs 
+                            SET status = 'DEAD', 
+                                completed_at = $2,
+                                error = $3
+                            WHERE id = $1
+                            "#,
+                        )
+                        .bind(&job_id)
+                        .bind(now)
+                        .bind(&error)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(StorageError::from)?;
+                    }
+                }
+            }
+
+            tx.commit().await.map_err(StorageError::from)?;
+            failed_start.elapsed()
+        } else {
+            std::time::Duration::ZERO
+        };
+
+        let total_time = total_start.elapsed();
+
+        info!(
+            "[TIMING] update_job_results: total={}ms | success_count={} success_time={}ms | failed_count={} failed_time={}ms",
+            total_time.as_millis(),
+            success_count,
+            success_time.as_millis(),
+            failed_count,
+            failed_time.as_millis()
+        );
+
         Ok(())
     }
 

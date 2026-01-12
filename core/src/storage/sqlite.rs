@@ -244,6 +244,135 @@ impl Storage for SqliteStorage {
         Ok(successfully_claimed)
     }
 
+    async fn claim_and_fetch_jobs(
+        &self,
+        worker_id: &str,
+        job_names: &[String],
+        limit: usize,
+    ) -> Result<Vec<InternalJob>> {
+        let mut conn = self.conn.lock().await;
+        let now = Utc::now().timestamp();
+
+        let tx = conn.transaction().map_err(StorageError::from)?;
+
+        // SQLite doesn't support FOR UPDATE SKIP LOCKED, but since we're
+        // single-threaded through the Mutex anyway, we can do this in a transaction
+
+        // Step 1: Find pending job IDs
+        let sql = if job_names.is_empty() {
+            r#"
+            SELECT id FROM jobs 
+            WHERE status = 'PENDING' AND scheduled_at <= ?1
+            ORDER BY scheduled_at ASC
+            LIMIT ?2
+            "#
+            .to_string()
+        } else {
+            let name_list: Vec<String> = job_names
+                .iter()
+                .map(|n| format!("'{}'", n.replace("'", "''")))
+                .collect();
+            format!(
+                r#"
+                SELECT id FROM jobs 
+                WHERE status = 'PENDING' AND scheduled_at <= ?1
+                  AND name IN ({})
+                ORDER BY scheduled_at ASC
+                LIMIT ?2
+                "#,
+                name_list.join(",")
+            )
+        };
+
+        let job_ids: Vec<String> = {
+            let mut stmt = tx.prepare(&sql).map_err(StorageError::from)?;
+            let rows = stmt
+                .query_map(params![now, limit as i64], |row| row.get(0))
+                .map_err(StorageError::from)?;
+            let mut ids = Vec::new();
+            for row in rows {
+                ids.push(row.map_err(StorageError::from)?);
+            }
+            ids
+        };
+
+        if job_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Step 2: Update those jobs to RUNNING
+        // Build placeholders starting from ?3 (since ?1 is worker_id, ?2 is now)
+        let placeholders: String = (3..3 + job_ids.len())
+            .map(|i| format!("?{}", i))
+            .collect::<Vec<_>>()
+            .join(",");
+
+        let update_sql = format!(
+            r#"
+            UPDATE jobs 
+            SET status = 'RUNNING', 
+                worker_id = ?1, 
+                started_at = ?2,
+                attempt = attempt + 1
+            WHERE id IN ({}) AND status = 'PENDING'
+            "#,
+            placeholders
+        );
+
+        {
+            use rusqlite::ToSql;
+            let mut params_vec: Vec<&dyn ToSql> = Vec::new();
+            let worker_id_owned = worker_id.to_string();
+            params_vec.push(&worker_id_owned);
+            params_vec.push(&now);
+            for id in &job_ids {
+                params_vec.push(id);
+            }
+            tx.execute(&update_sql, params_vec.as_slice())
+                .map_err(StorageError::from)?;
+        }
+
+        // Step 3: Fetch the full job data
+        let select_placeholders: String = (1..=job_ids.len())
+            .map(|i| format!("?{}", i))
+            .collect::<Vec<_>>()
+            .join(",");
+
+        let select_sql = format!(
+            r#"
+            SELECT id, name, args, options, status, attempt, 
+                   created_at, scheduled_at, started_at, completed_at,
+                   error, result, worker_id, idempotency_key
+            FROM jobs WHERE id IN ({})
+            "#,
+            select_placeholders
+        );
+
+        let jobs: Vec<InternalJob> = {
+            use rusqlite::ToSql;
+            let params_refs: Vec<&dyn ToSql> = job_ids.iter().map(|s| s as &dyn ToSql).collect();
+            let mut stmt = tx.prepare(&select_sql).map_err(StorageError::from)?;
+            let rows = stmt
+                .query_map(params_refs.as_slice(), |row| row_to_job(row))
+                .map_err(StorageError::from)?;
+            let mut result = Vec::new();
+            for row in rows {
+                result.push(row.map_err(StorageError::from)?);
+            }
+            result
+        };
+
+        tx.commit().map_err(StorageError::from)?;
+
+        debug!(
+            "Worker {} claimed {} jobs via pull (SQLite)",
+            worker_id,
+            jobs.len()
+        );
+
+        Ok(jobs)
+    }
+
     async fn update_job_results(&self, updates: Vec<(String, JobResult)>) -> Result<()> {
         let mut conn = self.conn.lock().await;
         let now = Utc::now().timestamp();

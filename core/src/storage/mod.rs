@@ -40,6 +40,16 @@ pub trait Storage: Clone + Send + Sync + 'static {
     /// Returns list of job IDs that were successfully claimed
     async fn claim_jobs(&self, claims: Vec<(String, String)>) -> Result<Vec<String>>;
 
+    /// Claim and fetch jobs directly for a worker (pull-based mode)
+    /// Uses FOR UPDATE SKIP LOCKED for efficient concurrent claiming
+    /// Returns the actual job data (not just IDs) for immediate processing
+    async fn claim_and_fetch_jobs(
+        &self,
+        worker_id: &str,
+        job_names: &[String],
+        limit: usize,
+    ) -> Result<Vec<InternalJob>>;
+
     /// Update job status after execution
     async fn update_job_result(&self, job_id: &str, result: JobResult) -> Result<InternalJob>;
 

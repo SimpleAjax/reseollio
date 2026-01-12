@@ -46,7 +46,7 @@ impl<S: Storage> ReseolioServer<S> {
         // spawn batch processor
         tokio::spawn(async move {
             let batch_size = 100;
-            let batch_timeout = std::time::Duration::from_millis(50);
+            let batch_timeout = std::time::Duration::from_millis(10);
             let mut batch = Vec::with_capacity(batch_size);
             let mut listeners = Vec::with_capacity(batch_size);
 
@@ -88,16 +88,24 @@ impl<S: Storage> ReseolioServer<S> {
                     continue;
                 }
 
+                let collect_time = collect_start.elapsed();
+                let batch_count = batch.len();
+
                 // Process batch
+                let update_start = Instant::now();
                 if let Err(e) = storage_clone
                     .update_job_results(batch.drain(..).collect())
                     .await
                 {
                     error!("Failed to commit batch acknowledgments: {}", e);
-                    // In a real system, we might retry or log individual errors.
-                    // For now, these jobs remain RUNNING and will be picked up by stale job recovery.
                 } else {
-                    debug!("Committed batch of {} acknowledgments", listeners.len());
+                    let update_time = update_start.elapsed();
+                    info!(
+                        "[TIMING] Ack batch: count={} | collect={}ms | update={}ms",
+                        batch_count,
+                        collect_time.as_millis(),
+                        update_time.as_millis()
+                    );
                 }
 
                 // Notify listeners (fire and forget mostly, but signal done)
