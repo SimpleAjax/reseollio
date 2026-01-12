@@ -89,6 +89,31 @@ impl Storage for PostgresStorage {
         .await
         .map_err(StorageError::from)?;
 
+        // HIGH PRIORITY: Partial index for PENDING jobs only
+        // This index is very small (only pending jobs) and speeds up get_pending_jobs()
+        // As jobs complete, they leave this index, keeping it compact
+        sqlx::query(
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_jobs_pending 
+                ON jobs(scheduled_at) WHERE status = 'PENDING'
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::from)?;
+
+        // MEDIUM PRIORITY: Partial index for RUNNING jobs
+        // Used for stale job recovery - finding jobs that have been running too long
+        sqlx::query(
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_jobs_running 
+                ON jobs(worker_id, started_at) WHERE status = 'RUNNING'
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::from)?;
+
         info!("PostgreSQL migrations applied successfully");
         Ok(())
     }
