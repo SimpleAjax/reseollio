@@ -63,7 +63,8 @@ pub trait Storage: Clone + Send + Sync + 'static {
     async fn cancel_job(&self, job_id: &str) -> Result<bool>;
 
     /// Get stale running jobs (for crash recovery)
-    async fn get_stale_running_jobs(&self, stale_threshold_secs: i64) -> Result<Vec<InternalJob>>;
+    /// Note: stale_threshold_secs is deprecated - jobs now use their individual timeout_ms value
+    async fn get_stale_running_jobs(&self, _stale_threshold_secs: i64) -> Result<Vec<InternalJob>>;
 
     /// Reset stale jobs to pending
     async fn reset_stale_job(&self, job_id: &str) -> Result<()>;

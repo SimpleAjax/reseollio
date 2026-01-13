@@ -141,8 +141,18 @@ impl<S: Storage> Reseolio for ReseolioServer<S> {
         &self,
         request: Request<EnqueueRequest>,
     ) -> Result<Response<EnqueueResponse>, Status> {
-        // ... (Keep existing implementation, copy carefully)
+        debug!("[ENQUEUE_JOB] >>> Received enqueue request");
         let req = request.into_inner();
+        debug!(
+            "[ENQUEUE_JOB] name={}, idempotency_key={}, args_len={}",
+            req.name,
+            if req.idempotency_key.is_empty() {
+                "<none>"
+            } else {
+                &req.idempotency_key
+            },
+            req.args.len()
+        );
 
         // Check for idempotency key
         if !req.idempotency_key.is_empty() {
@@ -204,9 +214,13 @@ impl<S: Storage> Reseolio for ReseolioServer<S> {
             },
         };
 
-        let job = self.storage.insert_job(new_job).await.map_err(to_status)?;
+        debug!("[ENQUEUE_JOB] Inserting job into storage...");
+        let job = self.storage.insert_job(new_job).await.map_err(|e| {
+            error!("[ENQUEUE_JOB] Failed to insert job: {:?}", e);
+            to_status(e)
+        })?;
 
-        info!("Enqueued job: {} ({})", job.id, job.name);
+        info!("[ENQUEUE_JOB] <<< Enqueued job: {} ({})", job.id, job.name);
 
         // Notify scheduler to process new job immediately
         self.scheduler_notify.notify_one();
@@ -223,7 +237,7 @@ impl<S: Storage> Reseolio for ReseolioServer<S> {
         &self,
         request: Request<Streaming<PollRequest>>,
     ) -> Result<Response<Self::PollJobsStream>, Status> {
-        // ... (Keep existing implementation)
+        debug!("[POLL_JOBS] >>> New worker connection received");
         let mut stream = request.into_inner();
         let registry = self.registry.clone();
         let storage = self.storage.clone();
@@ -243,6 +257,11 @@ impl<S: Storage> Reseolio for ReseolioServer<S> {
                     registered_names = poll_req.names.clone();
                     concurrency = poll_req.concurrency;
 
+                    debug!(
+                        "[POLL_JOBS] Worker {} registering: concurrency={}, names={:?}",
+                        worker_id, concurrency, registered_names
+                    );
+
                     registry
                         .register(WorkerInfo {
                             worker_id: worker_id.clone(),
@@ -255,10 +274,11 @@ impl<S: Storage> Reseolio for ReseolioServer<S> {
                         .await;
 
                     info!(
-                        "Worker {} connected (concurrency={}, names={:?})",
+                        "[POLL_JOBS] <<< Worker {} connected (concurrency={}, names={:?})",
                         worker_id, concurrency, registered_names
                     );
 
+                    debug!("[POLL_JOBS] Notifying scheduler about new worker");
                     scheduler_notify.notify_one();
                 }
                 Some(Err(e)) => {
@@ -313,12 +333,28 @@ impl<S: Storage> Reseolio for ReseolioServer<S> {
     }
 
     async fn ack_job(&self, request: Request<AckRequest>) -> Result<Response<AckResponse>, Status> {
+        debug!("[ACK_JOB] >>> Received ack request");
         let req = request.into_inner();
-        let result = req
-            .result
-            .ok_or_else(|| Status::invalid_argument("Missing result"))?;
+        debug!("[ACK_JOB] job_id={}", req.job_id);
+
+        let result = req.result.ok_or_else(|| {
+            error!(
+                "[ACK_JOB] Missing result in ack request for job {}",
+                req.job_id
+            );
+            Status::invalid_argument("Missing result")
+        })?;
+
+        debug!(
+            "[ACK_JOB] success={}, error={}",
+            result.success, result.error
+        );
 
         // Mark job as completed in the registry (frees capacity)
+        debug!(
+            "[ACK_JOB] Marking job {} as completed in registry",
+            req.job_id
+        );
         self.registry.job_completed(&req.job_id).await;
 
         let job_result = if result.success {

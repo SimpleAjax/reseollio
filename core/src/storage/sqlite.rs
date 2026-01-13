@@ -598,9 +598,9 @@ impl Storage for SqliteStorage {
         Ok(rows > 0)
     }
 
-    async fn get_stale_running_jobs(&self, stale_threshold_secs: i64) -> Result<Vec<InternalJob>> {
+    async fn get_stale_running_jobs(&self, _stale_threshold_secs: i64) -> Result<Vec<InternalJob>> {
         let conn = self.conn.lock().await;
-        let threshold = Utc::now().timestamp() - stale_threshold_secs;
+        let now_ms = Utc::now().timestamp_millis();
 
         let mut stmt = conn
             .prepare(
@@ -609,13 +609,18 @@ impl Storage for SqliteStorage {
                    created_at, scheduled_at, started_at, completed_at,
                    error, result, worker_id, idempotency_key
             FROM jobs 
-            WHERE status = 'RUNNING' AND started_at < ?1
+            WHERE status = 'RUNNING' 
+              AND started_at IS NOT NULL
+              AND (?1 - started_at * 1000) > COALESCE(
+                  CAST(json_extract(options, '$.timeout_ms') AS INTEGER),
+                  30000
+              )
             "#,
             )
             .map_err(StorageError::from)?;
 
         let jobs = stmt
-            .query_map(params![threshold], |row| row_to_job(row))
+            .query_map(params![now_ms], |row| row_to_job(row))
             .map_err(StorageError::from)?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(StorageError::from)?;

@@ -150,18 +150,24 @@ services:
       - ./tests:/app/tests  # Mount tests for live editing
     environment:
       - NODE_ENV=test
-      - RESEOLIO_LOG_LEVEL=info
+      - RESEOLIO_LOG_LEVEL=debug
+      - RUST_LOG=debug
+      - RESEOLIO_ADDR=0.0.0.0:50051
       - RESEOLIO_DB=postgres://user:password@postgres:5432/reseolio
     stdin_open: true
+    ports:
+      - "50051:50051"
     tty: true
     command: >
       sh -c "
-        echo '==> Starting Reseolio server...' &&
+        echo '==> Starting Reseolio server with DEBUG logging...' &&
+        export RUST_LOG=debug &&
         reseolio &
         sleep 2 &&
         echo '==> Server ready! Container will stay alive.' &&
         echo '==> Database: postgres://user:password@postgres:5432/reseolio' &&
         echo '==> Run tests with: tsx tests/load/02-multi-worker.ts' &&
+        echo '==> View logs with: docker logs -f reseolio-dev' &&
         echo '' &&
         tail -f /dev/null
       "

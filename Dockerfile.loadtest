@@ -22,7 +22,11 @@ RUN mkdir -p core/src && \
 # Copy actual source and build
 COPY core ./core
 COPY proto ./proto
-RUN touch core/src/main.rs && cargo build --release --features postgres
+# Build with debug info for debugging (even in release mode)
+RUN touch core/src/main.rs && \
+    RUSTFLAGS="-C debuginfo=2" cargo build --release --features postgres
+# Also build debug version for easier debugging
+RUN cargo build --features postgres
 
 # Stage 2: Node.js with Rust binary
 FROM node:22-bookworm-slim
@@ -37,10 +41,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     htop \
     openssl \
     ca-certificates \
+    gdbserver \
+    binutils \
+    lldb \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy Rust binary from builder
+# Copy Rust binaries from builder (both debug and release)
 COPY --from=rust-builder /app/target/release/reseolio /usr/local/bin/reseolio
+COPY --from=rust-builder /app/target/debug/reseolio /usr/local/bin/reseolio-debug
 
 # Copy package files for npm install
 COPY package.json package-lock.json ./

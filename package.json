@@ -12,7 +12,8 @@
     "test": "npm run test --workspaces",
     "test:e2e": "npm run test:e2e --workspace=sdks/node",
     "lint": "npm run lint --workspaces",
-    "typecheck": "npm run typecheck --workspaces"
+    "typecheck": "npm run typecheck --workspaces",
+    "debug": "tsx --inspect-brk test-debug.ts"  
   },
   "repository": {
     "type": "git",

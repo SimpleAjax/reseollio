@@ -137,6 +137,7 @@ impl<S: Storage> Scheduler<S> {
     async fn schedule_pending_jobs(&self) -> Result<()> {
         use std::time::Instant;
 
+        // debug!("[SCHEDULER] >>> Woke up to check for pending jobs");
         let total_start = Instant::now();
 
         // Phase 1: Get snapshot of workers state (cheap, in-memory check FIRST)
@@ -145,6 +146,7 @@ impl<S: Storage> Scheduler<S> {
         let snapshot_time = snapshot_start.elapsed();
 
         if workers.is_empty() {
+            // debug!("[SCHEDULER] No workers connected, skipping");
             return Ok(());
         }
 
@@ -159,13 +161,24 @@ impl<S: Storage> Scheduler<S> {
 
         if total_capacity == 0 {
             // All workers are saturated, skip DB fetch entirely
+            debug!("[SCHEDULER] All workers saturated (capacity=0), skipping DB fetch");
             return Ok(());
         }
+
+        debug!(
+            "[SCHEDULER] Workers have capacity={}, fetching pending jobs...",
+            total_capacity
+        );
 
         // Phase 2: Fetch pending jobs from database (only if we have capacity)
         let fetch_start = Instant::now();
         let pending_jobs = self.storage.get_pending_jobs(self.batch_size).await?;
         let fetch_time = fetch_start.elapsed();
+
+        debug!(
+            "[SCHEDULER] Fetched {} pending jobs from DB",
+            pending_jobs.len()
+        );
 
         if pending_jobs.is_empty() {
             return Ok(());

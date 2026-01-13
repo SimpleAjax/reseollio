@@ -156,13 +156,28 @@ async fn run_with_storage<S: Storage>(
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize logging
-    let _subscriber = FmtSubscriber::builder()
-        .with_max_level(Level::INFO)
-        .json()
-        .init();
+    // Initialize logging with environment-based level
+    // Respects RUST_LOG env var (e.g., RUST_LOG=debug)
+    let log_level = std::env::var("RUST_LOG")
+        .or_else(|_| std::env::var("RESEOLIO_LOG_LEVEL"))
+        .unwrap_or_else(|_| "info".to_string());
 
-    info!("Starting Reseolio Core v{}", env!("CARGO_PKG_VERSION"));
+    let level = match log_level.to_lowercase().as_str() {
+        "trace" => Level::TRACE,
+        "debug" => Level::DEBUG,
+        "info" => Level::INFO,
+        "warn" | "warning" => Level::WARN,
+        "error" => Level::ERROR,
+        _ => Level::INFO,
+    };
+
+    let _subscriber = FmtSubscriber::builder().with_max_level(level).json().init();
+
+    info!(
+        "Starting Reseolio Core v{} (log_level={})",
+        env!("CARGO_PKG_VERSION"),
+        log_level
+    );
 
     // Parse configuration from CLI args and environment variables
     let config = Config::parse();

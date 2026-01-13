@@ -8,7 +8,7 @@
 import { Reseolio } from '../../sdks/node/dist/index.js';
 import { spawn, ChildProcess } from 'node:child_process';
 
-const NUM_JOBS = 1000;
+const NUM_JOBS = 10000;
 const NUM_WORKERS = 5;
 const JOB_DURATION_MS = 10;
 

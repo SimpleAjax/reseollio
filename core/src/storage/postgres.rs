@@ -89,7 +89,7 @@ impl Storage for PostgresStorage {
         .await
         .map_err(StorageError::from)?;
 
-        // HIGH PRIORITY: Partial index for PENDING jobs only
+        // Partial index for PENDING jobs only
         // This index is very small (only pending jobs) and speeds up get_pending_jobs()
         // As jobs complete, they leave this index, keeping it compact
         sqlx::query(
@@ -102,7 +102,7 @@ impl Storage for PostgresStorage {
         .await
         .map_err(StorageError::from)?;
 
-        // MEDIUM PRIORITY: Partial index for RUNNING jobs
+        // Partial index for RUNNING jobs
         // Used for stale job recovery - finding jobs that have been running too long
         sqlx::query(
             r#"
@@ -648,19 +648,26 @@ impl Storage for PostgresStorage {
         Ok(result.rows_affected() > 0)
     }
 
-    async fn get_stale_running_jobs(&self, stale_threshold_secs: i64) -> Result<Vec<InternalJob>> {
-        let threshold = Utc::now().timestamp() - stale_threshold_secs;
+    async fn get_stale_running_jobs(&self, _stale_threshold_secs: i64) -> Result<Vec<InternalJob>> {
+        let now_ms = Utc::now().timestamp_millis();
 
+        // Find jobs where (NOW - started_at) > timeout_ms from job options
+        // This uses per-job timeout instead of global threshold
         let rows = sqlx::query(
             r#"
             SELECT id, name, args, options, status, attempt, 
                    created_at, scheduled_at, started_at, completed_at,
                    error, result, worker_id, idempotency_key
             FROM jobs 
-            WHERE status = 'RUNNING' AND started_at < $1
+            WHERE status = 'RUNNING' 
+              AND started_at IS NOT NULL
+              AND ($1 - started_at * 1000) > COALESCE(
+                  (options::json->>'timeout_ms')::integer,
+                  30000
+              )
             "#,
         )
-        .bind(threshold)
+        .bind(now_ms)
         .fetch_all(&self.pool)
         .await
         .map_err(StorageError::from)?;
