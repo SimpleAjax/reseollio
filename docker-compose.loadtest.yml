@@ -154,6 +154,9 @@ services:
       - RUST_LOG=debug
       - RESEOLIO_ADDR=0.0.0.0:50051
       - RESEOLIO_DB=postgres://user:password@postgres:5432/reseolio
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
+    links:
+      - jaeger
     stdin_open: true
     ports:
       - "50051:50051"
@@ -168,9 +171,19 @@ services:
         echo '==> Database: postgres://user:password@postgres:5432/reseolio' &&
         echo '==> Run tests with: tsx tests/load/02-multi-worker.ts' &&
         echo '==> View logs with: docker logs -f reseolio-dev' &&
+        echo '==> Jaeger UI: http://localhost:16686' &&
         echo '' &&
         tail -f /dev/null
       "
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.53
+    container_name: reseolio-jaeger
+    ports:
+      - "16686:16686" # UI
+      - "4317:4317"   # OTLP gRPC
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
 
 volumes:
   postgres-test-data:

@@ -549,11 +549,14 @@ impl<S: Storage> Reseolio for ReseolioServer<S> {
                 match req_result {
                     Ok(req) => {
                         let mut subs = subscribers.write().await;
-                        debug!("[SUBSCRIBE_TO_JOB] Subscribe to following count of jobs = {}", req.job_ids.len());
+                        debug!(
+                            "[SUBSCRIBE_TO_JOB] Subscribe to following count of jobs = {}",
+                            req.job_ids.len()
+                        );
                         for job_id in req.job_ids {
                             if req.unsubscribe {
                                 // Remove this sender from the job's subscribers
-                                if let Some(senders) = subs.get_mut(&job_id) {
+                                if let Some(_senders) = subs.get_mut(&job_id) {
                                     // Note: We can't easily remove tx by value, so we rely on cleanup on drop
                                     debug!("Client unsubscribing from job {}", job_id);
                                 }

@@ -2,6 +2,7 @@
  * Worker process for multi-worker concurrency test
  */
 
+import './preload-tracing';
 import { Reseolio } from '../../sdks/node/dist/index.js';
 
 const workerId = process.env.WORKER_ID || 'unknown';

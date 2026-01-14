@@ -5,6 +5,7 @@
  * Metrics: Worker utilization, job distribution, conflicts
  */
 
+import './preload-tracing';
 import { Reseolio } from '../../sdks/node/dist/index.js';
 import { spawn, ChildProcess } from 'node:child_process';
 
@@ -14,8 +15,9 @@ const JOB_DURATION_MS = 10;
 
 async function startWorker(workerId: number): Promise<ChildProcess> {
     return new Promise((resolve, reject) => {
-        const worker = spawn('tsx', ['tests/load/worker.ts', String(workerId)], {
+        const worker = spawn('npx', ['tsx', 'tests/load/worker.ts', String(workerId)], {
             stdio: ['ignore', 'pipe', 'pipe'],
+            shell: true,
             env: {
                 ...process.env,
                 WORKER_ID: String(workerId),

@@ -21,7 +21,21 @@ async-trait = { workspace = true }
 rand = { workspace = true }
 tokio-stream = { workspace = true }
 clap = { workspace = true }
-sqlx = { version = "0.7", features = ["postgres", "runtime-tokio-native-tls", "chrono", "uuid", "json"], optional = true }
+sqlx = { version = "0.7", features = [
+    "postgres",
+    "runtime-tokio-native-tls",
+    "chrono",
+    "uuid",
+    "json",
+], optional = true }
+http = "0.2"
+tower = { version = "0.4", features = ["full"] }
+tower-http = { version = "0.4", features = ["trace", "request-id", "util"] }
+tracing-opentelemetry = "0.22"
+opentelemetry = "0.21"
+opentelemetry_sdk = { version = "0.21", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.14", features = ["tonic"] }
+opentelemetry-http = "0.10"
 
 [build-dependencies]
 tonic-build = "0.10"

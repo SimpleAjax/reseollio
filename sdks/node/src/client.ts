@@ -12,6 +12,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { JobHandle } from './job';
 import { DurableFunction, DurableOptions } from './durable';
 import type { Job, JobOptions, DurableHandler, EnqueueResult } from './types';
+import { initTracing } from './tracing';
 
 export interface ReseolioConfig {
     /** Storage connection string (default: 'sqlite://./reseolio.db') */
@@ -71,6 +72,9 @@ export class Reseolio extends EventEmitter {
      * Start the Reseolio client and core process
      */
     async start(): Promise<void> {
+        // Initialize tracing if configured
+        initTracing();
+
         // Load proto definition
         await this.loadProto();
 

@@ -44,8 +44,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use storage::Storage;
 use tokio::sync::Notify;
-use tracing::{info, Level};
-use tracing_subscriber::FmtSubscriber;
+use tracing::info;
 
 /// The SQLite of Durable Execution
 ///
@@ -162,16 +161,56 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .or_else(|_| std::env::var("RESEOLIO_LOG_LEVEL"))
         .unwrap_or_else(|_| "info".to_string());
 
-    let level = match log_level.to_lowercase().as_str() {
-        "trace" => Level::TRACE,
-        "debug" => Level::DEBUG,
-        "info" => Level::INFO,
-        "warn" | "warning" => Level::WARN,
-        "error" => Level::ERROR,
-        _ => Level::INFO,
-    };
+    // Initialize OpenTelemetry
+    use opentelemetry_otlp::WithExportConfig;
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt; // Needed for with_endpoint
 
-    let _subscriber = FmtSubscriber::builder().with_max_level(level).json().init();
+    // Set propagator to support W3C Trace Context (traceparent header)
+    opentelemetry::global::set_text_map_propagator(
+        opentelemetry_sdk::propagation::TraceContextPropagator::new(),
+    );
+
+    // Check for OTLP endpoint
+    let otlp_endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").ok();
+
+    // Create the formatting layer (logs)
+    let fmt_layer = tracing_subscriber::fmt::layer()
+        .with_target(true)
+        .with_level(true)
+        .json();
+
+    let subscriber =
+        tracing_subscriber::registry().with(tracing_subscriber::EnvFilter::from_env("RUST_LOG"));
+
+    if let Some(endpoint) = otlp_endpoint {
+        info!(
+            "Initializing OpenTelemetry tracer with OTLP endpoint: {}",
+            endpoint
+        );
+
+        let tracer = opentelemetry_otlp::new_pipeline()
+            .tracing()
+            .with_exporter(
+                opentelemetry_otlp::new_exporter()
+                    .tonic()
+                    .with_endpoint(endpoint),
+            )
+            .with_trace_config(opentelemetry_sdk::trace::config().with_resource(
+                opentelemetry_sdk::Resource::new(vec![opentelemetry::KeyValue::new(
+                    "service.name",
+                    "reseolio-core",
+                )]),
+            ))
+            .install_batch(opentelemetry_sdk::runtime::Tokio)
+            .expect("Failed to initialize OpenTelemetry");
+
+        let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+
+        subscriber.with(fmt_layer).with(telemetry).init();
+    } else {
+        subscriber.with(fmt_layer).init();
+    }
 
     info!(
         "Starting Reseolio Core v{} (log_level={})",
