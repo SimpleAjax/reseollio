@@ -46,6 +46,12 @@ export class Reseolio extends EventEmitter {
     private workerId: string;
     private workerStream: any = null;
     private activeJobs: Set<string> = new Set();  // Track jobs being executed
+    private subscriptionStream: any = null;  // Stream for job completion subscriptions
+    private pendingResults: Map<string, {
+        resolve: (value: any) => void;
+        reject: (err: Error) => void;
+    }> = new Map();  // Track pending result callbacks
+    private completedResults: Map<string, { result?: any; error?: Error }> = new Map();  // Cache early results
 
     constructor(config: ReseolioConfig = {}) {
         super();
@@ -81,6 +87,9 @@ export class Reseolio extends EventEmitter {
         // Start worker loop
         this.startWorkerLoop();
 
+        // Start subscription stream for job completions
+        this.startSubscriptionStream();
+
         this.emit('ready');
         console.debug(`client started successfully : ${this.workerId}`)
     }
@@ -109,6 +118,12 @@ export class Reseolio extends EventEmitter {
         if (this.workerStream) {
             this.workerStream.cancel();
             this.workerStream = null;
+        }
+
+        // Stop subscription stream
+        if (this.subscriptionStream) {
+            this.subscriptionStream.cancel();
+            this.subscriptionStream = null;
         }
 
         // Close gRPC connection
@@ -279,6 +294,15 @@ export class Reseolio extends EventEmitter {
                     if (response.deduplicated) {
                         this.emit('deduplicated', response.jobId);
                     }
+
+                    // Subscribe immediately to catch fast-completing jobs
+                    if (this.subscriptionStream) {
+                        this.subscriptionStream.write({
+                            jobIds: [response.jobId],
+                            unsubscribe: false,
+                        });
+                    }
+
                     resolve(response.jobId);
                 }
             });
@@ -445,6 +469,88 @@ export class Reseolio extends EventEmitter {
 
         call.on('end', () => {
             this.emit('worker:end');
+        });
+    }
+
+    /**
+     * Start subscription stream for job completion notifications
+     */
+    private startSubscriptionStream(): void {
+        const call = this.grpcClient.SubscribeToJobs();
+        this.subscriptionStream = call;
+
+        // Handle incoming job completions
+        call.on('data', (completion: any) => {
+            // grpc-js uses camelCase for fields (job_id -> jobId)
+            const jobId = completion.jobId || completion.job_id;
+            const pending = this.pendingResults.get(jobId);
+
+            // Status 3 = SUCCESS, 5 = DEAD, 6 = CANCELLED
+            // Note: If status is 0 or undefined, the result.length check will determine success
+            let result: any = undefined;
+            let error: Error | undefined = undefined;
+
+            // Handle result - if result buffer has data, treat as success
+            if (completion.result?.length > 0 || completion.result?.data?.length > 0) {
+                const buf = completion.result?.data
+                    ? Buffer.from(completion.result.data)
+                    : Buffer.from(completion.result);
+                result = JSON.parse(buf.toString());
+            } else if (completion.status === 5) {
+                error = new Error(`Job failed: ${completion.error}`);
+            } else if (completion.status === 6) {
+                error = new Error('Job was cancelled');
+            }
+
+            if (pending) {
+                // Callback already registered - resolve immediately
+                this.pendingResults.delete(jobId);
+                if (error) {
+                    pending.reject(error);
+                } else {
+                    pending.resolve(result);
+                }
+            } else {
+                // No callback yet - cache the result for later retrieval
+                this.completedResults.set(jobId, { result, error });
+            }
+
+            this.emit('job:completion', completion);
+        });
+
+        call.on('error', (err: Error) => {
+            if ((err as any).code !== grpc.status.CANCELLED) {
+                this.emit('subscription:error', err);
+                // Reconnect after delay
+                setTimeout(() => this.startSubscriptionStream(), 1000);
+            }
+        });
+
+        call.on('end', () => {
+            this.emit('subscription:end');
+        });
+    }
+
+    /**
+     * Subscribe to job completion (internal use by JobHandle)
+     * Note: Subscription is already sent at enqueue time, this just registers the callback
+     */
+    subscribeToJob<T>(jobId: string): Promise<T> {
+        return new Promise<T>((resolve, reject) => {
+            // Check if result already arrived (cached)
+            const cached = this.completedResults.get(jobId);
+            if (cached) {
+                this.completedResults.delete(jobId);
+                if (cached.error) {
+                    reject(cached.error);
+                } else {
+                    resolve(cached.result as T);
+                }
+                return;
+            }
+
+            // Register callback - subscription was already sent at enqueue time
+            this.pendingResults.set(jobId, { resolve, reject });
         });
     }
 

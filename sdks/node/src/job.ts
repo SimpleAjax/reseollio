@@ -33,31 +33,40 @@ export class JobHandle<TResult = unknown> {
     /**
      * Wait for the job result
      * 
-     * Polls until the job is complete (success, dead, or cancelled)
+     * Uses push-based subscription (no polling) for efficient result notification.
+     * Falls back to one-time check if push doesn't arrive within timeout.
      */
-    async result(pollIntervalMs: number = 500): Promise<TResult> {
-        while (true) {
-            const job = await this.client.getJob(this.jobId);
-            const status = this.protoToStatus(job.status as unknown as number);
+    async result(timeoutMs: number = 30000): Promise<TResult> {
+        // Subscribe to completion notification immediately (no initial check)
+        const subscriptionPromise = this.client.subscribeToJob<TResult>(this.jobId);
 
-            if (status === 'success') {
-                const result = job.result
-                    ? JSON.parse(Buffer.from(job.result).toString())
-                    : null;
-                return result as TResult;
-            }
+        // Timeout fallback - if push doesn't arrive, check once
+        const timeoutPromise = new Promise<TResult>((resolve, reject) => {
+            setTimeout(async () => {
+                try {
+                    const job = await this.client.getJob(this.jobId);
+                    const status = this.protoToStatus(job.status as unknown as number);
 
-            if (status === 'dead') {
-                throw new Error(`Job failed after max retries: ${job.error}`);
-            }
+                    if (status === 'success') {
+                        const result = job.result
+                            ? JSON.parse(Buffer.from(job.result).toString())
+                            : null;
+                        resolve(result as TResult);
+                    } else if (status === 'dead') {
+                        reject(new Error(`Job failed after max retries: ${job.error}`));
+                    } else if (status === 'cancelled') {
+                        reject(new Error('Job was cancelled'));
+                    } else {
+                        reject(new Error(`Job still pending after ${timeoutMs}ms`));
+                    }
+                } catch (err) {
+                    reject(err);
+                }
+            }, timeoutMs);
+        });
 
-            if (status === 'cancelled') {
-                throw new Error('Job was cancelled');
-            }
-
-            // Wait before polling again
-            await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
-        }
+        // Return whichever completes first
+        return Promise.race([subscriptionPromise, timeoutPromise]);
     }
 
     /**

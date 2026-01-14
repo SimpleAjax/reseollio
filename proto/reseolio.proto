@@ -23,6 +23,9 @@ service Reseolio {
   
   // List jobs with filtering
   rpc ListJobs(ListJobsRequest) returns (ListJobsResponse);
+  
+  // Subscribe to job completion events (push-based, no polling)
+  rpc SubscribeToJobs(stream SubscribeRequest) returns (stream JobCompletion);
 }
 
 // === Enqueue Messages ===
@@ -128,4 +131,18 @@ message ListJobsRequest {
 message ListJobsResponse {
   repeated Job jobs = 1;
   int32 total = 2;                  // Total matching jobs (for pagination)
+}
+
+// === Subscription Messages ===
+
+message SubscribeRequest {
+  repeated string job_ids = 1;      // Job IDs to subscribe to
+  bool unsubscribe = 2;             // True to unsubscribe from these IDs
+}
+
+message JobCompletion {
+  string job_id = 1;                // Completed job ID
+  JobStatus status = 2;             // Final status (success, dead, cancelled)
+  bytes result = 3;                 // Serialized result (if success)
+  string error = 4;                 // Error message (if dead/failed)
 }

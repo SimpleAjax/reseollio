@@ -8,7 +8,7 @@
 import { Reseolio } from '../../sdks/node/dist/index.js';
 
 async function main() {
-    const NUM_JOBS = 500;
+    const NUM_JOBS = 2000;
     const JOB_DURATION_MS = 10;
 
     console.log(`\n========================================`);
