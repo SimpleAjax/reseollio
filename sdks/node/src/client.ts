@@ -256,16 +256,17 @@ export class Reseolio extends EventEmitter {
             throw new Error('Reseolio client is not connected');
         }
 
+        // Pass through options - Rust core applies defaults
         const request = {
             name,
             args: Buffer.from(JSON.stringify(args)),
             options: {
-                maxAttempts: options.maxAttempts ?? 3,
-                backoff: options.backoff ?? 'exponential',
-                initialDelayMs: options.initialDelayMs ?? 1000,
-                maxDelayMs: options.maxDelayMs ?? 60000,
-                timeoutMs: options.timeoutMs ?? 30000,
-                jitter: options.jitter ?? 0.1,
+                maxAttempts: options.maxAttempts ?? 0,  // 0 = use server default
+                backoff: options.backoff ?? '',         // '' = use server default
+                initialDelayMs: options.initialDelayMs ?? 0,
+                maxDelayMs: options.maxDelayMs ?? 0,
+                timeoutMs: options.timeoutMs ?? 0,
+                jitter: options.jitter ?? 0,
             },
             idempotencyKey: options.idempotencyKey ?? '',
         };
