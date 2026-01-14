@@ -154,15 +154,18 @@ impl<S: Storage> Reseolio for ReseolioServer<S> {
             req.args.len()
         );
 
-        // Check for idempotency key
+        // Check for idempotency key (scoped per function name)
         if !req.idempotency_key.is_empty() {
             if let Some(existing) = self
                 .storage
-                .get_job_by_idempotency_key(&req.idempotency_key)
+                .get_job_by_idempotency_key(&req.name, &req.idempotency_key)
                 .await
                 .map_err(to_status)?
             {
-                info!("Deduplicated job with key: {}", req.idempotency_key);
+                info!(
+                    "Deduplicated job {} with key: {}",
+                    req.name, req.idempotency_key
+                );
                 return Ok(Response::new(EnqueueResponse {
                     job_id: existing.id,
                     deduplicated: true,

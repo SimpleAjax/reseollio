@@ -66,15 +66,16 @@ impl Storage for SqliteStorage {
                 error           TEXT,
                 result          BLOB,
                 worker_id       TEXT,
-                idempotency_key TEXT UNIQUE
+                idempotency_key TEXT,
+                UNIQUE(name, idempotency_key)
             );
 
             CREATE INDEX IF NOT EXISTS idx_jobs_status_scheduled 
                 ON jobs(status, scheduled_at);
             CREATE INDEX IF NOT EXISTS idx_jobs_name 
                 ON jobs(name);
-            CREATE INDEX IF NOT EXISTS idx_jobs_idempotency 
-                ON jobs(idempotency_key) WHERE idempotency_key IS NOT NULL;
+            CREATE INDEX IF NOT EXISTS idx_jobs_name_idempotency 
+                ON jobs(name, idempotency_key) WHERE idempotency_key IS NOT NULL;
 
             CREATE TABLE IF NOT EXISTS schema_version (
                 version INTEGER PRIMARY KEY
@@ -139,7 +140,11 @@ impl Storage for SqliteStorage {
         Ok(result)
     }
 
-    async fn get_job_by_idempotency_key(&self, key: &str) -> Result<Option<InternalJob>> {
+    async fn get_job_by_idempotency_key(
+        &self,
+        name: &str,
+        key: &str,
+    ) -> Result<Option<InternalJob>> {
         let conn = self.conn.lock().await;
 
         let result = conn
@@ -148,9 +153,9 @@ impl Storage for SqliteStorage {
             SELECT id, name, args, options, status, attempt, 
                    created_at, scheduled_at, started_at, completed_at,
                    error, result, worker_id, idempotency_key
-            FROM jobs WHERE idempotency_key = ?1
+            FROM jobs WHERE name = ?1 AND idempotency_key = ?2
             "#,
-                params![key],
+                params![name, key],
                 |row| row_to_job(row),
             )
             .optional()

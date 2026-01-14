@@ -27,8 +27,13 @@ pub trait Storage: Clone + Send + Sync + 'static {
     /// Get a job by ID
     async fn get_job(&self, job_id: &str) -> Result<Option<InternalJob>>;
 
-    /// Get a job by idempotency key
-    async fn get_job_by_idempotency_key(&self, key: &str) -> Result<Option<InternalJob>>;
+    /// Get a job by function name and idempotency key
+    /// Idempotency keys are scoped per function to prevent collisions
+    async fn get_job_by_idempotency_key(
+        &self,
+        name: &str,
+        key: &str,
+    ) -> Result<Option<InternalJob>>;
 
     /// Get pending jobs ready to run (scheduled_at <= now)
     async fn get_pending_jobs(&self, limit: usize) -> Result<Vec<InternalJob>>;

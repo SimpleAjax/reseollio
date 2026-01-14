@@ -50,7 +50,8 @@ impl Storage for PostgresStorage {
                 error           TEXT,
                 result          BYTEA,
                 worker_id       TEXT,
-                idempotency_key TEXT UNIQUE
+                idempotency_key TEXT,
+                UNIQUE(name, idempotency_key)
             )
             "#,
         )
@@ -81,8 +82,8 @@ impl Storage for PostgresStorage {
 
         sqlx::query(
             r#"
-            CREATE INDEX IF NOT EXISTS idx_jobs_idempotency 
-                ON jobs(idempotency_key) WHERE idempotency_key IS NOT NULL
+            CREATE INDEX IF NOT EXISTS idx_jobs_name_idempotency 
+                ON jobs(name, idempotency_key) WHERE idempotency_key IS NOT NULL
             "#,
         )
         .execute(&self.pool)
@@ -166,15 +167,20 @@ impl Storage for PostgresStorage {
         }
     }
 
-    async fn get_job_by_idempotency_key(&self, key: &str) -> Result<Option<InternalJob>> {
+    async fn get_job_by_idempotency_key(
+        &self,
+        name: &str,
+        key: &str,
+    ) -> Result<Option<InternalJob>> {
         let row = sqlx::query(
             r#"
             SELECT id, name, args, options, status, attempt, 
                    created_at, scheduled_at, started_at, completed_at,
                    error, result, worker_id, idempotency_key
-            FROM jobs WHERE idempotency_key = $1
+            FROM jobs WHERE name = $1 AND idempotency_key = $2
             "#,
         )
+        .bind(name)
         .bind(key)
         .fetch_optional(&self.pool)
         .await
