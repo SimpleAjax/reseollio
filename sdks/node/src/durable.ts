@@ -5,16 +5,24 @@
 import type { JobOptions, DurableHandler } from './types';
 import type { JobHandle } from './job';
 
-export interface DurableOptions extends JobOptions { }
+/**
+ * Options for durable function registration (no idempotencyKey)
+ * 
+ * Idempotency keys are per-execution, not per-registration.
+ * Pass idempotencyKey when calling the durable function, not when defining it.
+ */
+export interface DurableOptions extends Omit<JobOptions, 'idempotencyKey'> { }
 
 /**
  * A durable function that returns a JobHandle when called
+ * 
+ * The last parameter can optionally be JobOptions for per-execution configuration
  */
 export interface DurableFunction<TArgs extends unknown[], TResult> {
-    (...args: TArgs): Promise<JobHandle<TResult>>;
+    (...args: [...TArgs, JobOptions?]): Promise<JobHandle<TResult>>;
     /** The registered function name */
     functionName: string;
-    /** The function options */
+    /** The default function options (can be overridden per execution) */
     options: DurableOptions;
 }
 

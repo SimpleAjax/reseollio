@@ -71,7 +71,12 @@ export class JobHandle<TResult = unknown> {
      * Get full job details
      */
     async details(): Promise<Job> {
-        return this.client.getJob(this.jobId);
+        const job = await this.client.getJob(this.jobId);
+        // Convert proto status to client-friendly format
+        return {
+            ...job,
+            status: this.protoToStatus(job.status as unknown as number)
+        };
     }
 
     private protoToStatus(status: number | string): JobStatus {

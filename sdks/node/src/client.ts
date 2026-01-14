@@ -202,8 +202,38 @@ export class Reseolio extends EventEmitter {
         };
 
         // Return wrapped function that enqueues jobs
-        const durableFunc = async (...args: TArgs): Promise<JobHandle<TResult>> => {
-            const jobId = await this.enqueue(name, args, options);
+        // Last parameter can optionally be JobOptions for per-execution config
+        const durableFunc = async (...args: [...TArgs, JobOptions?]): Promise<JobHandle<TResult>> => {
+            // Check if last argument is JobOptions (has known option keys)
+            const lastArg = args[args.length - 1];
+            let executionArgs: unknown[];
+            let executionOptions: JobOptions;
+
+            if (
+                lastArg &&
+                typeof lastArg === 'object' &&
+                !Array.isArray(lastArg) &&
+                (
+                    'idempotencyKey' in lastArg ||
+                    'maxAttempts' in lastArg ||
+                    'backoff' in lastArg ||
+                    'initialDelayMs' in lastArg ||
+                    'maxDelayMs' in lastArg ||
+                    'timeoutMs' in lastArg ||
+                    'jitter' in lastArg
+                )
+            ) {
+                // Last arg is options, exclude it from handler args
+                executionArgs = args.slice(0, -1);
+                // Merge default options with per-execution options
+                executionOptions = { ...options, ...(lastArg as JobOptions) };
+            } else {
+                // No options provided, use all args
+                executionArgs = args;
+                executionOptions = options;
+            }
+
+            const jobId = await this.enqueue(name, executionArgs, executionOptions);
             return new JobHandle<TResult>(jobId, this);
         };
 
