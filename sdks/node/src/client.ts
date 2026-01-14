@@ -129,13 +129,72 @@ export class Reseolio extends EventEmitter {
     }
 
     /**
+     * Create a namespaced function name
+     * 
+     * @example
+     * const name = reseolio.namespace('payments', 'billing', 'calculate');
+     * // Returns: 'payments:billing:calculate'
+     */
+    namespace(...parts: string[]): string {
+        if (parts.length === 0) {
+            throw new Error('[Reseolio] namespace() requires at least one part');
+        }
+
+        // Validate each part
+        for (const part of parts) {
+            if (!part || typeof part !== 'string') {
+                throw new Error('[Reseolio] All namespace parts must be non-empty strings');
+            }
+            if (part.includes(':') || part.includes('/')) {
+                throw new Error(`[Reseolio] Namespace part '${part}' cannot contain ':' or '/'`);
+            }
+        }
+
+        return parts.join(':');
+    }
+
+    /**
      * Create a durable function wrapper
+     * 
+     * Function names should be namespaced to avoid collisions across teams/modules.
+     * Use the namespace() helper or follow the pattern: 'module:service:function'
+     * 
+     * @example
+     * const sendEmail = reseolio.durable(
+     *     reseolio.namespace('notifications', 'email', 'send'),
+     *     async (to, subject, body) => { ... }
+     * );
      */
     durable<TArgs extends unknown[], TResult>(
         name: string,
         handler: DurableHandler<TArgs, TResult>,
         options: DurableOptions = {}
     ): DurableFunction<TArgs, TResult> {
+        // Validate name is not empty
+        if (!name || typeof name !== 'string') {
+            throw new Error('[Reseolio] Function name must be a non-empty string');
+        }
+
+        // Check for namespace (should contain ':' or '/')
+        if (!name.includes(':') && !name.includes('/')) {
+            console.warn(
+                `[Reseolio] Function '${name}' is not namespaced. This may cause name collisions.\n` +
+                `  Recommended: reseolio.namespace('module', 'service', '${name}')\n` +
+                `  Or use pattern: 'module:service:${name}'`
+            );
+        }
+
+        // Detect collisions
+        if (this.registry[name]) {
+            const existing = this.registry[name];
+            throw new Error(
+                `[Reseolio] Function '${name}' is already registered.\n` +
+                `  Existing handler: ${existing.handler.toString().slice(0, 80)}...\n` +
+                `  New handler: ${handler.toString().slice(0, 80)}...\n` +
+                `  Use a unique namespaced name or check for duplicate registrations.`
+            );
+        }
+
         // Register the handler
         this.registry[name] = {
             handler: handler as DurableHandler<unknown[], unknown>,

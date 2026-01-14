@@ -83,7 +83,7 @@ export class JobHandle<TResult = unknown> {
             case 1: return 'pending';
             case 2: return 'running';
             case 3: return 'success';
-            case 4: return 'failed';
+            case 4: return 'failed'; // deprecated state, `dead` is used instead
             case 5: return 'dead';
             case 6: return 'cancelled';
             default: return 'pending';

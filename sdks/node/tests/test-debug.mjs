@@ -1,4 +1,4 @@
-import { Reseolio } from './src/client.js';
+import { Reseolio } from '../dist/index.js';
 
 console.log('🔍 Starting debug session...\n');
 
@@ -11,10 +11,10 @@ const client = new Reseolio({
 
 // Event listeners to see what's happening
 client.on('ready', () => console.log('✅ Client is ready!'));
-client.on('core:stdout', (data: any) => console.log('📤 Core:', data.trim()));
-client.on('job:start', (job: any) => console.log(`🚀 Job started: ${job.id} (${job.name})`));
-client.on('job:success', (job: any, result: any) => console.log(`✅ Job ${job.id} succeeded:`, result));
-client.on('job:error', (job: any, error: any) => console.error(`❌ Job ${job.id} failed:`, error));
+client.on('core:stdout', (data) => console.log('📤 Core:', data.trim()));
+client.on('job:start', (job) => console.log(`🚀 Job started: ${job.id} (${job.name})`));
+client.on('job:success', (job, result) => console.log(`✅ Job ${job.id} succeeded:`, result));
+client.on('job:error', (job, error) => console.error(`❌ Job ${job.id} failed:`, error));
 
 try {
     // Start the client
@@ -24,7 +24,7 @@ try {
 
     // Define a durable function  
     console.log('📍 Step 2: Defining function...');
-    const multiply = client.durable('multiply', async (a: number, b: number) => {
+    const multiply = client.durable('multiply', async (a, b) => {
         console.log(`  🔢 Executing: ${a} * ${b}`);
         await new Promise(r => setTimeout(r, 100));
         return a * b;
