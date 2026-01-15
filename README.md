@@ -30,6 +30,16 @@ Building reliable distributed systems usually implies massive operational comple
 - **🔍 Observability**: Query job status, history, and results via a simple API. (Dashboard coming soon).
 - **🗣️ Polyglot Design**: Language-agnostic gRPC protocol.
 
+## 🆚 Comparison
+
+### vs. Message Queues (BullMQ, Celery, RabbitMQ)
+*   **Queues** are great for "fire and forget". You push a message, and maybe a worker picks it up. If the worker crashes, you might lose the job or get a duplicate.
+*   **Reseolio** tracks the *entire lifecycle*. It knows if a job is running, failed, or succeeded. It stores the result. You can `await` a job's completion. It's an execution engine, not just a pipe.
+
+### vs. Temporal / Cadence
+*   **Temporal** is powerful but typically requires a heavy cluster (Frontend, History, Matching, Worker services) + Cassandra/ES. It's designed for massive, complex workflows.
+*   **Reseolio** is the "minimalist" alternative. It uses your **existing Postgres** and a single sidecar binary. It provides the core promise of durable execution without the operational overhead of managing a new distributed cluster. Perfect for "Application-Local" durability or teams who want to keep their stack simple.
+
 ## 📊 Benchmarks
 
 Reseolio adds minimal overhead to your application.
