@@ -146,7 +146,7 @@ async function runTests() {
             {
                 maxAttempts: 6,
                 backoff: 'exponential',
-                initialDelayMs: 1000,  // 1 second base - makes exponential growth visible
+                initialDelayMs: 3000,  // 1 second base - makes exponential growth visible
             }
         );
 
@@ -159,9 +159,9 @@ async function runTests() {
             const delay2 = expAttempts[2] - expAttempts[1];
             const delay3 = expAttempts[3] - expAttempts[2];
 
-            console.log(`    Delay 1: ${delay1}ms (expected ~1s)`);
-            console.log(`    Delay 2: ${delay2}ms (expected ~2s)`);
-            console.log(`    Delay 3: ${delay3}ms (expected ~4s)`);
+            console.log(`    Delay 1: ${delay1}ms (expected ~3s)`);
+            console.log(`    Delay 2: ${delay2}ms (expected ~6s)`);
+            console.log(`    Delay 3: ${delay3}ms (expected ~12s)`);
 
             // Exponential: delay3 should be > delay2 > delay1
             // Allow some tolerance for timing variance
@@ -194,7 +194,7 @@ async function runTests() {
             {
                 maxAttempts: 5,
                 backoff: 'linear',
-                initialDelayMs: 1000,  // 1 second base - makes linear growth visible
+                initialDelayMs: 3000,  // 1 second base - makes linear growth visible
             }
         );
 
@@ -206,9 +206,9 @@ async function runTests() {
             const delay2 = linearAttempts[2] - linearAttempts[1];
             const delay3 = linearAttempts[3] - linearAttempts[2];
 
-            console.log(`    Delay 1: ${delay1}ms (expected ~1s)`);
-            console.log(`    Delay 2: ${delay2}ms (expected ~2s)`);
-            console.log(`    Delay 3: ${delay3}ms (expected ~3s)`);
+            console.log(`    Delay 1: ${delay1}ms (expected ~3s)`);
+            console.log(`    Delay 2: ${delay2}ms (expected ~6s)`);
+            console.log(`    Delay 3: ${delay3}ms (expected ~9s)`);
 
             // Linear backoff: delays should increase by ~1s each time
             // Allow tolerance for timing variance (delays should be within ~500ms of expected)
@@ -238,7 +238,7 @@ async function runTests() {
             {
                 maxAttempts: 5,
                 backoff: 'fixed',
-                initialDelayMs: 1000,  // 1 second - consistent delays
+                initialDelayMs: 3000,  // 1 second - consistent delays
             }
         );
 
@@ -249,8 +249,8 @@ async function runTests() {
             const delay1 = fixedAttempts[1] - fixedAttempts[0];
             const delay2 = fixedAttempts[2] - fixedAttempts[1];
 
-            console.log(`    Delay 1: ${delay1}ms (expected ~1s)`);
-            console.log(`    Delay 2: ${delay2}ms (expected ~1s)`);
+            console.log(`    Delay 1: ${delay1}ms (expected ~3s)`);
+            console.log(`    Delay 2: ${delay2}ms (expected ~3s)`);
 
             // Fixed backoff should have similar delays (within 50% tolerance)
             const similarDelays = Math.abs(delay1 - delay2) < delay1 * 0.5;

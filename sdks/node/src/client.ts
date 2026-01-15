@@ -489,8 +489,10 @@ export class Reseolio extends EventEmitter {
         call.on('error', (err: Error) => {
             if ((err as any).code !== grpc.status.CANCELLED) {
                 this.emit('worker:error', err);
-                // Reconnect after delay
-                setTimeout(() => this.startWorkerLoop(), 1000);
+                // Reconnect after delay (only if still connected)
+                if (this.connected) {
+                    setTimeout(() => this.startWorkerLoop(), 1000);
+                }
             }
         });
 
@@ -577,16 +579,20 @@ export class Reseolio extends EventEmitter {
         call.on('error', (err: Error) => {
             if ((err as any).code !== grpc.status.CANCELLED) {
                 this.emit('subscription:error', err);
-                // Reconnect after delay
-                setTimeout(() => this.startSubscriptionStream(), 1000);
+                // Reconnect after delay (only if still connected)
+                if (this.connected) {
+                    setTimeout(() => this.startSubscriptionStream(), 1000);
+                }
             }
         });
 
         call.on('end', () => {
             this.emit('subscription:end');
-            console.debug('[Reseolio] Subscription stream ended (remote close). Reconnecting...');
-            // Reconnect after delay
-            setTimeout(() => this.startSubscriptionStream(), 1000);
+            // Only reconnect if client is still active
+            if (this.connected) {
+                console.debug('[Reseolio] Subscription stream ended (remote close). Reconnecting...');
+                setTimeout(() => this.startSubscriptionStream(), 1000);
+            }
         });
     }
 
