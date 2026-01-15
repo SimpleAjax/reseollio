@@ -1,6 +1,6 @@
 {
     "name": "reseolio",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "description": "The SQLite of Durable Execution - Node.js SDK",
     "main": "dist/index.js",
     "types": "dist/index.d.ts",
