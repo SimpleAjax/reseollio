@@ -106,8 +106,11 @@ pub fn calculate_backoff(options: &JobOptions, attempt: i32) -> i32 {
         let mut rng = rand::thread_rng();
         let jitter_range = (capped as f32 * options.jitter) as i32;
         let jitter = rng.gen_range(-jitter_range..=jitter_range);
-        (capped + jitter).max(0) / 1000 // Convert to seconds
+        // Use ceiling division to round up (ensures sub-second delays become at least 1 second)
+        ((capped + jitter).max(0) + 999) / 1000
     } else {
-        capped / 1000
+        // Use ceiling division: (n + 999) / 1000 rounds up to nearest second
+        // This prevents delays like 200ms from being truncated to 0 seconds
+        (capped + 999) / 1000
     }
 }

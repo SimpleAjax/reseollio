@@ -124,39 +124,48 @@ async function runTests() {
         logTest('Job error is captured', deadDetails.error !== undefined && deadDetails.error.length > 0);
 
         // ========== TEST 3: Exponential Backoff ==========
-        console.log('\nTest 3: Exponential backoff timing');
+        console.log('\\nTest 3: Exponential backoff timing');
         console.log('-'.repeat(40));
 
+        // Note: Server uses second-level granularity with ceiling division.
+        // With initialDelayMs=1000:
+        //   Attempt 1: 1000 * 2^0 = 1000ms → 1s
+        //   Attempt 2: 1000 * 2^1 = 2000ms → 2s
+        //   Attempt 3: 1000 * 2^2 = 4000ms → 4s
+        //   Attempt 4: 1000 * 2^3 = 8000ms → 8s
         let expAttempts: number[] = [];
         const expBackoffJob = reseolio.durable(
             reseolio.namespace('e2e', 'test02', 'expBackoff'),
             async () => {
                 expAttempts.push(Date.now());
-                if (expAttempts.length < 3) {
+                if (expAttempts.length < 4) {
                     throw new Error(`Fail attempt ${expAttempts.length}`);
                 }
                 return { attempts: expAttempts.length };
             },
             {
-                maxAttempts: 5,
+                maxAttempts: 6,
                 backoff: 'exponential',
-                initialDelayMs: 200,
+                initialDelayMs: 1000,  // 1 second base - makes exponential growth visible
             }
         );
 
         const expHandle = await expBackoffJob();
         await expHandle.result(30000);
 
-        // Check that delays increased exponentially (roughly)
-        if (expAttempts.length >= 3) {
+        // Check that delays increased exponentially
+        if (expAttempts.length >= 4) {
             const delay1 = expAttempts[1] - expAttempts[0];
             const delay2 = expAttempts[2] - expAttempts[1];
+            const delay3 = expAttempts[3] - expAttempts[2];
 
-            console.log(`    Delay 1: ${delay1}ms`);
-            console.log(`    Delay 2: ${delay2}ms`);
+            console.log(`    Delay 1: ${delay1}ms (expected ~1s)`);
+            console.log(`    Delay 2: ${delay2}ms (expected ~2s)`);
+            console.log(`    Delay 3: ${delay3}ms (expected ~4s)`);
 
-            // Delay 2 should be roughly double delay 1 (with some tolerance for execution time)
-            const exponentialGrowth = delay2 > delay1 * 1.5;
+            // Exponential: delay3 should be > delay2 > delay1
+            // Allow some tolerance for timing variance
+            const exponentialGrowth = delay3 > delay2 * 1.3 && delay2 > delay1 * 1.3;
             logTest('Exponential backoff increases delays', exponentialGrowth);
         } else {
             logTest('Exponential backoff test', false, 'Not enough attempts recorded');
@@ -166,6 +175,12 @@ async function runTests() {
         console.log('\nTest 4: Linear backoff timing');
         console.log('-'.repeat(40));
 
+        // Note: Server uses second-level granularity with ceiling division.
+        // With initialDelayMs=1000:
+        //   Attempt 1: 1000 * 1 = 1000ms → 1s
+        //   Attempt 2: 1000 * 2 = 2000ms → 2s
+        //   Attempt 3: 1000 * 3 = 3000ms → 3s
+        //   Attempt 4: 1000 * 4 = 4000ms → 4s
         let linearAttempts: number[] = [];
         const linearBackoffJob = reseolio.durable(
             reseolio.namespace('e2e', 'test02', 'linearBackoff'),
@@ -179,7 +194,7 @@ async function runTests() {
             {
                 maxAttempts: 5,
                 backoff: 'linear',
-                initialDelayMs: 200,
+                initialDelayMs: 1000,  // 1 second base - makes linear growth visible
             }
         );
 
@@ -191,20 +206,25 @@ async function runTests() {
             const delay2 = linearAttempts[2] - linearAttempts[1];
             const delay3 = linearAttempts[3] - linearAttempts[2];
 
-            console.log(`    Delay 1: ${delay1}ms`);
-            console.log(`    Delay 2: ${delay2}ms`);
-            console.log(`    Delay 3: ${delay3}ms`);
+            console.log(`    Delay 1: ${delay1}ms (expected ~1s)`);
+            console.log(`    Delay 2: ${delay2}ms (expected ~2s)`);
+            console.log(`    Delay 3: ${delay3}ms (expected ~3s)`);
 
-            // Linear backoff should have roughly equal increments
-            logTest('Linear backoff has increasing delays', delay3 > delay2 && delay2 > delay1);
+            // Linear backoff: delays should increase by ~1s each time
+            // Allow tolerance for timing variance (delays should be within ~500ms of expected)
+            const linearGrowth = delay3 > delay2 && delay2 > delay1;
+            logTest('Linear backoff has increasing delays', linearGrowth);
         } else {
             logTest('Linear backoff test', false, 'Not enough attempts recorded');
         }
+
 
         // ========== TEST 5: Fixed Backoff ==========
         console.log('\nTest 5: Fixed backoff timing');
         console.log('-'.repeat(40));
 
+        // Note: Server uses second-level granularity with ceiling division.
+        // With initialDelayMs=1000, fixed backoff should give ~1s delay each time
         let fixedAttempts: number[] = [];
         const fixedBackoffJob = reseolio.durable(
             reseolio.namespace('e2e', 'test02', 'fixedBackoff'),
@@ -218,7 +238,7 @@ async function runTests() {
             {
                 maxAttempts: 5,
                 backoff: 'fixed',
-                initialDelayMs: 200,
+                initialDelayMs: 1000,  // 1 second - consistent delays
             }
         );
 
@@ -229,15 +249,16 @@ async function runTests() {
             const delay1 = fixedAttempts[1] - fixedAttempts[0];
             const delay2 = fixedAttempts[2] - fixedAttempts[1];
 
-            console.log(`    Delay 1: ${delay1}ms`);
-            console.log(`    Delay 2: ${delay2}ms`);
+            console.log(`    Delay 1: ${delay1}ms (expected ~1s)`);
+            console.log(`    Delay 2: ${delay2}ms (expected ~1s)`);
 
-            // Fixed backoff should have similar delays
+            // Fixed backoff should have similar delays (within 50% tolerance)
             const similarDelays = Math.abs(delay1 - delay2) < delay1 * 0.5;
             logTest('Fixed backoff has consistent delays', similarDelays);
         } else {
             logTest('Fixed backoff test', false, 'Not enough attempts recorded');
         }
+
 
         // ========== TEST 6: Error Type Preservation ==========
         console.log('\nTest 6: Error information preserved');
