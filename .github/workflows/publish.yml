@@ -23,7 +23,7 @@ jobs:
             target: x86_64-pc-windows-msvc
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       
       # Setup Rust
       - name: Install Rust Toolchain
@@ -49,28 +49,29 @@ jobs:
           mv core/target/${{ matrix.target }}/release/reseolio.exe ${{ matrix.artifact_name }}
 
       # Upload Artifact
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
-          name: binaries
+          name: binary-${{ matrix.os }}
           path: ${{ matrix.artifact_name }}
 
   publish-npm:
     needs: build-core
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       
-      - uses: actions/setup-node@v3
+      - uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '22'
           registry-url: 'https://registry.npmjs.org'
 
       # Download all artifacts from previous jobs into the vendor directory
       - name: Download Binaries
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
-          name: binaries
+          pattern: binary-*
           path: sdks/node/vendor/
+          merge-multiple: true
 
       - name: Verify Binaries
         run: |

@@ -157,7 +157,7 @@ jobs:
             target: x86_64-pc-windows-msvc
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       
       - name: Build Binary
@@ -165,30 +165,35 @@ jobs:
           cd core
           cargo build --release --features postgres --target ${{ matrix.target }}
           
-      - name: Rename & Upload
-        run: |
-          mv core/target/${{ matrix.target }}/release/reseolio${{ matrix.os == 'windows-latest' && '.exe' || '' }} ${{ matrix.artifact_name }}
+      - name: Rename Binary (Linux/Mac)
+        if: matrix.os != 'windows-latest'
+        run: mv core/target/${{ matrix.target }}/release/reseolio ${{ matrix.artifact_name }}
           
-      - uses: actions/upload-artifact@v3
+      - name: Rename Binary (Windows)
+        if: matrix.os == 'windows-latest'
+        run: mv core/target/${{ matrix.target }}/release/reseolio.exe ${{ matrix.artifact_name }}
+          
+      - uses: actions/upload-artifact@v4
         with:
-          name: binaries
+          name: binary-${{ matrix.os }}
           path: ${{ matrix.artifact_name }}
 
   publish-npm:
     needs: build-core
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-node@v3
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '22'
           registry-url: 'https://registry.npmjs.org'
           
       - name: Download Binaries
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
-          name: binaries
+          pattern: binary-*
           path: sdks/node/vendor/
+          merge-multiple: true
 
       - name: Publish
         run: |
