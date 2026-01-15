@@ -8,7 +8,7 @@
 import { Reseolio } from '../../sdks/node/dist/index.js';
 
 const NUM_JOBS = 100;
-const FAILURE_RATE = 0.7; // 70% fail on first attempt
+const FAILURE_RATE = 0.8; // 80% fail rate
 
 async function main() {
     console.log(`🔬 LOAD TEST: Retry Storm`);
@@ -30,18 +30,18 @@ async function main() {
 
     // Track attempts
     reseolio.on('job:start', (job) => {
-        console.log(`Job ${job.id} started`);
+        // console.log(`Job ${job.id} started`);
         const count = attemptCounts.get(job.attempt) || 0;
         attemptCounts.set(job.attempt, count + 1);
         totalAttempts++;
     });
 
     reseolio.on('job:success', (job) => {
-        console.log(`Job ${job.id} succeeded`);
+        // console.log(`Job ${job.id} succeeded`);
     });
 
     reseolio.on('job:error', (job) => {
-        console.log(`Job ${job.id} failed`);
+        // console.log(`Job ${job.id} failed`);
         // Will retry if attempts remain
     });
 

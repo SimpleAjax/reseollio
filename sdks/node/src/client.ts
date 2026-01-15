@@ -392,7 +392,7 @@ export class Reseolio extends EventEmitter {
         const packageDefinition = await protoLoader.load(protoPath, {
             keepCase: false,  // ← FIXED: Convert to camelCase!
             longs: String,
-            enums: String,
+            enums: Number,    // ← Use numeric enum values for consistent handling
             defaults: true,
             oneofs: true,
         });
@@ -526,15 +526,19 @@ export class Reseolio extends EventEmitter {
             let result: any = undefined;
             let error: Error | undefined = undefined;
 
+            // Status enum values: 3=SUCCESS, 5=DEAD, 6=CANCELLED
+            const isDead = completion.status === 5;
+            const isCancelled = completion.status === 6;
+
             // Handle result - if result buffer has data, treat as success
             if (completion.result?.length > 0 || completion.result?.data?.length > 0) {
                 const buf = completion.result?.data
                     ? Buffer.from(completion.result.data)
                     : Buffer.from(completion.result);
                 result = JSON.parse(buf.toString());
-            } else if (completion.status === 5) {
+            } else if (isDead) {
                 error = new Error(`Job failed: ${completion.error}`);
-            } else if (completion.status === 6) {
+            } else if (isCancelled) {
                 error = new Error('Job was cancelled');
             }
 
@@ -667,9 +671,16 @@ export class Reseolio extends EventEmitter {
                 shouldRetry: true, // Let the server decide based on attempt count
             });
 
+            // Emit generic event (for backward compatibility and logging)
             this.emit('job:error', job, error);
-            // Also emit job-specific event for JobHandle.result() listeners
-            this.emit(`job:failed:${job.id}`, new Error(error));
+
+            // Emit attempt-specific failure event (for metrics/debugging)
+            // This is TRANSIENT - the job may be retried
+            this.emit(`job:attempt-failed:${job.id}`, { job, error, attempt: job.attempt });
+
+            // DO NOT emit job:failed:${job.id} here!
+            // That event is reserved for TERMINAL failures (status=DEAD)
+            // and is emitted by the subscription stream (client.ts:556)
         } finally {
             // Remove from active jobs
             this.activeJobs.delete(job.id);

@@ -22,6 +22,7 @@ async function main() {
     const reseolio = new Reseolio({
         storage: process.env.RESEOLIO_DB || 'sqlite://./load-test.db',
         autoStart: false,
+        workerConcurrency: 6
     });
 
     // Metrics

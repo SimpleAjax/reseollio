@@ -378,9 +378,14 @@ impl Storage for SqliteStorage {
         Ok(jobs)
     }
 
-    async fn update_job_results(&self, updates: Vec<(String, JobResult)>) -> Result<()> {
+    async fn update_job_results(
+        &self,
+        updates: Vec<(String, JobResult)>,
+    ) -> Result<Vec<(String, JobStatus)>> {
         let mut conn = self.conn.lock().await;
         let now = Utc::now().timestamp();
+
+        let mut final_statuses: Vec<(String, JobStatus)> = Vec::with_capacity(updates.len());
 
         let tx = conn.transaction().map_err(StorageError::from)?;
 
@@ -441,6 +446,7 @@ impl Storage for SqliteStorage {
                         stmt_success
                             .execute(params![job_id, now, return_value])
                             .map_err(StorageError::from)?;
+                        final_statuses.push((job_id, JobStatus::Success));
                     }
                     JobResult::Failed {
                         error,
@@ -466,11 +472,13 @@ impl Storage for SqliteStorage {
                                 stmt_retry
                                     .execute(params![job_id, next_run, &error])
                                     .map_err(StorageError::from)?;
+                                final_statuses.push((job_id, JobStatus::Pending));
                             } else {
                                 // Mark dead
                                 stmt_dead
                                     .execute(params![job_id, now, &error])
                                     .map_err(StorageError::from)?;
+                                final_statuses.push((job_id, JobStatus::Dead));
                             }
                         }
                     }
@@ -480,7 +488,7 @@ impl Storage for SqliteStorage {
 
         tx.commit().map_err(StorageError::from)?;
 
-        Ok(())
+        Ok(final_statuses)
     }
 
     async fn update_job_result(&self, job_id: &str, result: JobResult) -> Result<InternalJob> {

@@ -454,15 +454,21 @@ impl Storage for PostgresStorage {
             .ok_or_else(|| ReseolioError::JobNotFound(job_id.to_string()))
     }
 
-    async fn update_job_results(&self, updates: Vec<(String, JobResult)>) -> Result<()> {
+    async fn update_job_results(
+        &self,
+        updates: Vec<(String, JobResult)>,
+    ) -> Result<Vec<(String, JobStatus)>> {
         use std::time::Instant;
 
         if updates.is_empty() {
-            return Ok(());
+            return Ok(Vec::new());
         }
 
         let total_start = Instant::now();
         let now = Utc::now().timestamp();
+
+        // Track final statuses for notification purposes
+        let mut final_statuses: Vec<(String, JobStatus)> = Vec::with_capacity(updates.len());
 
         // Separate SUCCESS results (can be batched) from FAILED results (need individual handling)
         let mut success_ids: Vec<String> = Vec::new();
@@ -472,6 +478,7 @@ impl Storage for PostgresStorage {
         for (job_id, result) in updates {
             match result {
                 JobResult::Success { return_value } => {
+                    final_statuses.push((job_id.clone(), JobStatus::Success));
                     success_ids.push(job_id);
                     success_results.push(return_value);
                 }
@@ -479,6 +486,7 @@ impl Storage for PostgresStorage {
                     error,
                     should_retry,
                 } => {
+                    // We'll update the status after checking attempt count below
                     failed_updates.push((job_id, error, should_retry));
                 }
             }
@@ -550,6 +558,7 @@ impl Storage for PostgresStorage {
                     let attempt: i32 = row.get(1);
 
                     if should_retry && attempt < options.max_attempts {
+                        // Job will be retried - status is PENDING
                         let delay = calculate_backoff(&options, attempt);
                         let next_run = now + delay as i64;
 
@@ -570,7 +579,10 @@ impl Storage for PostgresStorage {
                         .execute(&mut *tx)
                         .await
                         .map_err(StorageError::from)?;
+
+                        final_statuses.push((job_id, JobStatus::Pending));
                     } else {
+                        // Job is DEAD (no more retries)
                         sqlx::query(
                             r#"
                             UPDATE jobs 
@@ -586,6 +598,8 @@ impl Storage for PostgresStorage {
                         .execute(&mut *tx)
                         .await
                         .map_err(StorageError::from)?;
+
+                        final_statuses.push((job_id, JobStatus::Dead));
                     }
                 }
             }
@@ -607,7 +621,7 @@ impl Storage for PostgresStorage {
             failed_time.as_millis()
         );
 
-        Ok(())
+        Ok(final_statuses)
     }
 
     async fn mark_job_dead(&self, job_id: &str, error: &str) -> Result<InternalJob> {

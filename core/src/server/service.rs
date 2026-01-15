@@ -115,91 +115,137 @@ impl<S: Storage> ReseolioServer<S> {
                 let collect_time = collect_start.elapsed();
                 let batch_count = batch.len();
 
-                // Collect job completion events BEFORE draining batch
-                let completions: Vec<(String, proto::JobCompletion)> = batch
+                // Save result details for building notifications later
+                // Map: job_id -> (result_bytes, error_string)
+                let job_results_map: std::collections::HashMap<String, (Vec<u8>, String)> = batch
                     .iter()
                     .map(|(job_id, result)| {
-                        let (status, result_bytes, error) = match result {
-                            JobResult::Success { return_value } => (
-                                proto::JobStatus::Success as i32,
-                                return_value.clone().unwrap_or_default(),
-                                String::new(),
-                            ),
-                            JobResult::Failed {
-                                error,
-                                should_retry,
-                            } => {
-                                if *should_retry {
-                                    (proto::JobStatus::Pending as i32, vec![], error.clone())
-                                } else {
-                                    (proto::JobStatus::Dead as i32, vec![], error.clone())
-                                }
+                        let (result_bytes, error) = match result {
+                            JobResult::Success { return_value } => {
+                                (return_value.clone().unwrap_or_default(), String::new())
                             }
+                            JobResult::Failed { error, .. } => (vec![], error.clone()),
                         };
-                        (
-                            job_id.clone(),
-                            proto::JobCompletion {
-                                job_id: job_id.clone(),
-                                status,
-                                result: result_bytes,
-                                error,
-                            },
-                        )
+                        (job_id.clone(), (result_bytes, error))
                     })
                     .collect();
 
-                // Process batch
+                // Process batch and get actual final statuses
                 let update_start = Instant::now();
-                if let Err(e) = storage_clone
+                match storage_clone
                     .update_job_results(batch.drain(..).collect())
                     .await
                 {
-                    error!("Failed to commit batch acknowledgments: {}", e);
-                } else {
-                    let update_time = update_start.elapsed();
-                    info!(
-                        "[TIMING] Ack batch: count={} | collect={}ms | update={}ms",
-                        batch_count,
-                        collect_time.as_millis(),
-                        update_time.as_millis()
-                    );
+                    Err(e) => {
+                        error!("Failed to commit batch acknowledgments: {}", e);
+                    }
+                    Ok(final_statuses) => {
+                        let update_time = update_start.elapsed();
+                        info!(
+                            "[TIMING] Ack batch: count={} | collect={}ms | update={}ms",
+                            batch_count,
+                            collect_time.as_millis(),
+                            update_time.as_millis()
+                        );
 
-                    // Notify subscribers of completed jobs (or cache for late arrivals)
-                    let mut subs = subscribers_clone.write().await;
-                    let mut cache = cache_clone.write().await;
-
-                    // Periodic cache cleanup (remove expired entries)
-                    cache.retain(|_, cached| cached.cached_at.elapsed() < cache_ttl);
-
-                    for (job_id, completion) in completions {
-                        // Only notify/cache for terminal states
-                        if completion.status == proto::JobStatus::Success as i32
-                            || completion.status == proto::JobStatus::Dead as i32
-                            || completion.status == proto::JobStatus::Cancelled as i32
-                        {
-                            if let Some(senders) = subs.remove(&job_id) {
-                                // Subscriber exists - notify immediately
-                                for sender in senders {
-                                    if let Err(e) = sender.try_send(completion.clone()) {
-                                        warn!("Failed to send notification for job {}: channel full/closed ({})", job_id, e);
+                        // Build completions using the ACTUAL final statuses from storage
+                        let completions: Vec<(String, proto::JobCompletion)> = final_statuses
+                            .into_iter()
+                            .filter_map(|(job_id, status)| {
+                                let proto_status = match status {
+                                    crate::storage::JobStatus::Success => {
+                                        proto::JobStatus::Success as i32
                                     }
+                                    crate::storage::JobStatus::Dead => {
+                                        proto::JobStatus::Dead as i32
+                                    }
+                                    crate::storage::JobStatus::Cancelled => {
+                                        proto::JobStatus::Cancelled as i32
+                                    }
+                                    crate::storage::JobStatus::Pending => {
+                                        proto::JobStatus::Pending as i32
+                                    }
+                                    crate::storage::JobStatus::Running => {
+                                        proto::JobStatus::Running as i32
+                                    }
+                                    crate::storage::JobStatus::Failed => {
+                                        proto::JobStatus::Failed as i32
+                                    }
+                                };
+
+                                if let Some((result_bytes, error)) = job_results_map.get(&job_id) {
+                                    Some((
+                                        job_id.clone(),
+                                        proto::JobCompletion {
+                                            job_id: job_id.clone(),
+                                            status: proto_status,
+                                            result: result_bytes.clone(),
+                                            error: error.clone(),
+                                        },
+                                    ))
+                                } else {
+                                    None
                                 }
-                            } else {
-                                // No subscriber yet - cache for late arrival
-                                debug!("Caching completion for job {} (no subscriber yet)", job_id);
-                                cache.insert(
-                                    job_id.clone(),
-                                    CachedCompletion {
-                                        completion: completion.clone(),
-                                        cached_at: Instant::now(),
-                                    },
-                                );
+                            })
+                            .collect();
+
+                        // Notify subscribers of completed jobs (or cache for late arrivals)
+                        let mut subs = subscribers_clone.write().await;
+                        let mut cache = cache_clone.write().await;
+
+                        // Periodic cache cleanup (remove expired entries)
+                        cache.retain(|_, cached| cached.cached_at.elapsed() < cache_ttl);
+
+                        for (job_id, completion) in completions {
+                            // Only notify/cache for terminal states
+                            if completion.status == proto::JobStatus::Success as i32
+                                || completion.status == proto::JobStatus::Dead as i32
+                                || completion.status == proto::JobStatus::Cancelled as i32
+                            {
+                                if let Some(senders) = subs.remove(&job_id) {
+                                    // Subscriber exists - notify immediately
+                                    info!(
+                                        "Notifying {} subscribers for job {} (status={:?})",
+                                        senders.len(),
+                                        job_id,
+                                        completion.status
+                                    );
+                                    if completion.status == proto::JobStatus::Dead as i32 {
+                                        warn!(
+                                            "Sending DEAD notification to {} subscribers for job {}",
+                                            senders.len(),
+                                            job_id
+                                        );
+                                    }
+                                    for sender in senders {
+                                        if let Err(e) = sender.try_send(completion.clone()) {
+                                            warn!("Failed to send notification for job {}: channel full/closed ({})", job_id, e);
+                                        }
+                                    }
+                                } else {
+                                    // No subscriber yet - cache for late arrival
+                                    info!("Caching completion for job {} (no subscriber yet, status={:?})", job_id, completion.status);
+                                    if completion.status == proto::JobStatus::Dead as i32 {
+                                        warn!(
+                                            "Caching DEAD completion for job {} (no subscriber found)",
+                                            job_id
+                                        );
+                                    }
+                                    cache.insert(
+                                        job_id.clone(),
+                                        CachedCompletion {
+                                            completion: completion.clone(),
+                                            cached_at: Instant::now(),
+                                        },
+                                    );
+                                }
                             }
                         }
                     }
                 }
 
                 // Notify listeners (fire and forget mostly, but signal done)
+                // This happens for BOTH success and error cases
                 for tx in listeners.drain(..) {
                     let _ = tx.send(());
                 }
