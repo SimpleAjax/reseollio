@@ -18,6 +18,7 @@ const tests = [
     { file: '05-events-and-observability.ts', name: 'Events and Observability' },
     { file: '06-workflow-patterns.ts', name: 'Workflow Patterns' },
     { file: '07-timeout-handling.ts', name: 'Timeout Handling' },
+    { file: '08-latency-benchmarks.ts', name: 'Latency Benchmarks' },
 ];
 
 interface TestResult {
