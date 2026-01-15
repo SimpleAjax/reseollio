@@ -10,12 +10,30 @@ It runs alongside your application as an ultra-lightweight **Rust binary**, mana
 
 Building reliable distributed systems usually implies massive operational complexity. Reseolio eliminates the "glue code" and infrastructure bloat typically required for reliable background jobs.
 
-### 📉 Drastically Reduced Operational Burden
+### 📉 The Reseolio Experience
 
-1.  **No More "State Tetris"**: Stop adding `status`, `last_attempt`, `next_retry_at` columns to your business tables. Reseolio handles the entire lifecycle state externally.
-2.  **Goodbye, Cron Jobs**: You don't need a separate Cron scheduler to poll your database for "pending" jobs. Reseolio's scheduler pushes work to your app exactly when needed.
-3.  **Zero-Infrastructure Overhead**: You don't need to manage a Redis cluster, RabbitMQ, or a heavy Temporal deployment. You just need **Postgres** (which you probably already have) and your application.
-4.  **Local Context Access**: Unlike standard worker queues that run in isolated processes, Reseolio jobs execute **inside your running application instance**. This means your jobs have instant access to shared connections, in-memory caches, and global singletons without complex initialization logic.
+
+1.  **True Async Non-Blocking Architecture**:
+    Decouple your heavy operations from your API responses. Offload PDF generation, data processing, or third-party webhooks instantly. 
+    *   **No manual cron jobs** required to poll for "failed" webhooks.
+    *   **No custom state management** needed to track if an external API call succeeded or timed out.
+    Reseolio handles the retries, state, and scheduling out of the box.
+
+2.  **Sleep Through the Night (Invincible Jobs)**:
+    Server crashed? Deployment rolled back? `kill -9`? Reseolio doesn't care. Your jobs pick up exactly where they left off the moment your app comes back online.
+
+3.  **The "`await`" That Survives a Crash**:
+    Turn complex background work into a simple API call. You can `await` a job result that takes hours to finish or spans multiple server restarts.
+    ```typescript
+    // Looks synchronous, but it's non-blocking, durable, distributed, and retry-safe.
+    const result = await processHugeReport(data);
+    ```
+
+4.  **Write Logic, Not Infrastructure**:
+    Stop configuring Dead Letter Queues, SQS visibility timeouts, or Redis eviction policies. Reseolio handles the queue, the retries, the state, and the storage. You just write the function.
+
+5.  **Local Dev == Production**:
+    Since it's just a binary and Postgres, you can reproduce complex distributed failure modes on your laptop. No mocking cloud services. No "it works on my machine" issues.
 
 ### ⚡ Rust-Powered Efficiency
 
