@@ -34,14 +34,23 @@ Instead, we follow the industry standard (like `esbuild`, `biome`):
 
 You need to compile the Rust core for all 3 major platforms.
 
+> **Important**: PostgreSQL support is an optional feature. By default, only SQLite is enabled.
+> To build with PostgreSQL support, add `--features postgres` to the build command.
+
 **Option A: Build Locally (If you have access to Mac/Linux machines)**
 Run this on each machine:
 ```bash
 cd core
+# SQLite only (default):
 cargo build --release
+
+# With PostgreSQL support:
+cargo build --release --features postgres
+
 # Rename the output to reseolio-{os}-{arch}
 # e.g., reseolio-linux-x64, reseolio-darwin-arm64, reseolio-win32-x64.exe
 ```
+
 
 **Option B: Use GitHub Actions (Recommended)**
 Create `.github/workflows/release.yml` (template provided below) to auto-build on every tag.
@@ -154,7 +163,7 @@ jobs:
       - name: Build Binary
         run: |
           cd core
-          cargo build --release --target ${{ matrix.target }}
+          cargo build --release --features postgres --target ${{ matrix.target }}
           
       - name: Rename & Upload
         run: |
@@ -215,8 +224,9 @@ When you modify code in `core/` (Rust) or `sdks/node/` (TS):
 ## 6. Summary of Commands
 
 | Action | Command |
-|OSS|---|
-| **Build Core (Local)** | `cd core && cargo build --release` |
+|--------|---------|
+| **Build Core (SQLite only)** | `cd core && cargo build --release` |
+| **Build Core (+ PostgreSQL)** | `cd core && cargo build --release --features postgres` |
 | **Build SDK (Local)** | `cd sdks/node && npm run build` |
 | **Pack (Test NPM)** | `npm pack` (generates .tgz to inspect) |
 | **Login NPM** | `npm login` |

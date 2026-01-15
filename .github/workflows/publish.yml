@@ -31,11 +31,11 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      # Build Binary
+      # Build Binary (with PostgreSQL support)
       - name: Build Binary
         run: |
           cd core
-          cargo build --release --target ${{ matrix.target }}
+          cargo build --release --features postgres --target ${{ matrix.target }}
 
       # Rename Binary (Shell-agnostic way is tricky, usually split steps or use shell specific)
       - name: Rename Binary (Linux/Mac)
