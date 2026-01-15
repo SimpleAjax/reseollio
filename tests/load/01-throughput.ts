@@ -5,6 +5,7 @@
  * Metrics: Jobs/sec, latency, completion rate
  */
 
+import './preload-tracing';
 import { Reseolio } from '../../sdks/node/dist/index.js';
 
 async function main() {
@@ -79,7 +80,31 @@ async function main() {
         const processStart = Date.now();
         console.log(`\n=> start awaiting for processing job...\n`);
 
-        await Promise.all(jobHandles.map(j => j.result()));
+        // Track pending jobs for observability
+        // Use Map to track which jobs are still outstanding
+        const pendingJobs = new Map(jobHandles.map((h, idx) => [h.jobId, idx]));
+
+        const resultPromises = jobHandles.map((handle) =>
+            handle.result().then(result => {
+                pendingJobs.delete(handle.jobId);
+                return result;
+            })
+        );
+
+        // Periodically log pending jobs to detect stuck jobs
+        const monitorInterval = setInterval(() => {
+            const pendingCount = pendingJobs.size;
+            if (pendingCount > 0) {
+                console.log(`  [PENDING] ${pendingCount} jobs still running`);
+                // If only a few are left, print their IDs to help debugging
+                if (pendingCount <= 100) {
+                    console.log(`    Job IDs: ${[...pendingJobs.keys()].join(', ')}`);
+                }
+            }
+        }, 5000);
+
+        await Promise.all(resultPromises);
+        clearInterval(monitorInterval);
         console.log(`\n=> completed awaiting for processing job...\n`);
 
         const processTime = Date.now() - processStart;

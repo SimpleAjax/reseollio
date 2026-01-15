@@ -24,6 +24,12 @@ pub mod proto {
 use proto::reseolio_server::{Reseolio, ReseolioServer as TonicReseolioServer};
 use proto::*;
 
+/// Cached job completion for late subscribers (with timestamp for TTL)
+struct CachedCompletion {
+    completion: proto::JobCompletion,
+    cached_at: Instant,
+}
+
 /// The Reseolio gRPC service implementation
 pub struct ReseolioServer<S: Storage> {
     storage: S,
@@ -35,6 +41,8 @@ pub struct ReseolioServer<S: Storage> {
     ack_tx: mpsc::Sender<(String, JobResult, tokio::sync::oneshot::Sender<()>)>, // Added oneshot for optional wait, though we optimize for fire-forget
     /// Subscribers waiting for job completions (job_id -> list of notification channels)
     job_subscribers: Arc<RwLock<HashMap<String, Vec<mpsc::Sender<proto::JobCompletion>>>>>,
+    /// Cache for job completions that arrived before subscriptions (fixes race condition)
+    completed_jobs_cache: Arc<RwLock<HashMap<String, CachedCompletion>>>,
 }
 
 impl<S: Storage> ReseolioServer<S> {
@@ -50,6 +58,14 @@ impl<S: Storage> ReseolioServer<S> {
         let job_subscribers: Arc<RwLock<HashMap<String, Vec<mpsc::Sender<proto::JobCompletion>>>>> =
             Arc::new(RwLock::new(HashMap::new()));
         let subscribers_clone = job_subscribers.clone();
+
+        // Create completion cache for late subscribers (fixes race condition)
+        let completed_jobs_cache: Arc<RwLock<HashMap<String, CachedCompletion>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+        let cache_clone = completed_jobs_cache.clone();
+
+        // Cache TTL: 60 seconds (plenty of time for subscription to arrive)
+        let cache_ttl = std::time::Duration::from_secs(60);
 
         // spawn batch processor
         tokio::spawn(async move {
@@ -148,18 +164,36 @@ impl<S: Storage> ReseolioServer<S> {
                         update_time.as_millis()
                     );
 
-                    // Notify subscribers of completed jobs
+                    // Notify subscribers of completed jobs (or cache for late arrivals)
                     let mut subs = subscribers_clone.write().await;
+                    let mut cache = cache_clone.write().await;
+
+                    // Periodic cache cleanup (remove expired entries)
+                    cache.retain(|_, cached| cached.cached_at.elapsed() < cache_ttl);
+
                     for (job_id, completion) in completions {
-                        // Only notify for terminal states
+                        // Only notify/cache for terminal states
                         if completion.status == proto::JobStatus::Success as i32
                             || completion.status == proto::JobStatus::Dead as i32
                             || completion.status == proto::JobStatus::Cancelled as i32
                         {
                             if let Some(senders) = subs.remove(&job_id) {
+                                // Subscriber exists - notify immediately
                                 for sender in senders {
-                                    let _ = sender.try_send(completion.clone());
+                                    if let Err(e) = sender.try_send(completion.clone()) {
+                                        warn!("Failed to send notification for job {}: channel full/closed ({})", job_id, e);
+                                    }
                                 }
+                            } else {
+                                // No subscriber yet - cache for late arrival
+                                debug!("Caching completion for job {} (no subscriber yet)", job_id);
+                                cache.insert(
+                                    job_id.clone(),
+                                    CachedCompletion {
+                                        completion: completion.clone(),
+                                        cached_at: Instant::now(),
+                                    },
+                                );
                             }
                         }
                     }
@@ -178,6 +212,7 @@ impl<S: Storage> ReseolioServer<S> {
             scheduler_notify,
             ack_tx,
             job_subscribers,
+            completed_jobs_cache,
         }
     }
 
@@ -355,8 +390,15 @@ impl<S: Storage> Reseolio for ReseolioServer<S> {
             loop {
                 match stream.next().await {
                     Some(Ok(poll_req)) => {
-                        registry.update_heartbeat(&poll_req.worker_id).await;
-                        debug!("Heartbeat from worker {}", poll_req.worker_id);
+                        // Update worker capabilities (handles dynamic handler registration)
+                        registry
+                            .update_worker_capabilities(
+                                &poll_req.worker_id,
+                                poll_req.names.clone(),
+                                poll_req.concurrency,
+                            )
+                            .await;
+                        debug!("Heartbeat/update from worker {}", poll_req.worker_id);
                     }
                     Some(Err(e)) => {
                         warn!("Worker {} stream error: {}", worker_id, e);
@@ -540,8 +582,10 @@ impl<S: Storage> Reseolio for ReseolioServer<S> {
         request: Request<Streaming<SubscribeRequest>>,
     ) -> Result<Response<Self::SubscribeToJobsStream>, Status> {
         let mut in_stream = request.into_inner();
-        let (tx, rx) = mpsc::channel::<proto::JobCompletion>(1000);
+        // Increase channel capacity to handle high-throughput bursts (fixes dropped notifications)
+        let (tx, rx) = mpsc::channel::<proto::JobCompletion>(10000);
         let subscribers = self.job_subscribers.clone();
+        let completion_cache = self.completed_jobs_cache.clone();
         debug!("[SUBSCRIBE_TO_JOB] Trying to subscribe");
         // Spawn task to handle subscription requests
         tokio::spawn(async move {
@@ -549,6 +593,7 @@ impl<S: Storage> Reseolio for ReseolioServer<S> {
                 match req_result {
                     Ok(req) => {
                         let mut subs = subscribers.write().await;
+                        let mut cache = completion_cache.write().await;
                         debug!(
                             "[SUBSCRIBE_TO_JOB] Subscribe to following count of jobs = {}",
                             req.job_ids.len()
@@ -561,11 +606,22 @@ impl<S: Storage> Reseolio for ReseolioServer<S> {
                                     debug!("Client unsubscribing from job {}", job_id);
                                 }
                             } else {
-                                // Add this sender to the job's subscribers
-                                subs.entry(job_id.clone())
-                                    .or_insert_with(Vec::new)
-                                    .push(tx.clone());
-                                debug!("Client subscribed to job {}", job_id);
+                                // Check cache first - completion might have arrived before subscription
+                                if let Some(cached) = cache.remove(&job_id) {
+                                    debug!(
+                                        "Delivering cached completion for job {} (was waiting)",
+                                        job_id
+                                    );
+                                    if let Err(e) = tx.try_send(cached.completion) {
+                                        warn!("Failed to deliver cached completion for job {}: channel full/closed ({})", job_id, e);
+                                    }
+                                } else {
+                                    // Add this sender to the job's subscribers
+                                    subs.entry(job_id.clone())
+                                        .or_insert_with(Vec::new)
+                                        .push(tx.clone());
+                                    debug!("Client subscribed to job {}", job_id);
+                                }
                             }
                         }
                     }

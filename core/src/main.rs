@@ -171,8 +171,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         opentelemetry_sdk::propagation::TraceContextPropagator::new(),
     );
 
-    // Check for OTLP endpoint
-    let otlp_endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").ok();
+    // Check for OTLP endpoint (filter out empty strings)
+    let otlp_endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
+        .ok()
+        .filter(|s| !s.trim().is_empty());
 
     // Create the formatting layer (logs)
     let fmt_layer = tracing_subscriber::fmt::layer()

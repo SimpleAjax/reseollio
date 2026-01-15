@@ -150,11 +150,11 @@ services:
       - ./tests:/app/tests  # Mount tests for live editing
     environment:
       - NODE_ENV=test
-      - RESEOLIO_LOG_LEVEL=debug
-      - RUST_LOG=debug
+      - RESEOLIO_LOG_LEVEL=warn
+      - RUST_LOG=warn
       - RESEOLIO_ADDR=0.0.0.0:50051
       - RESEOLIO_DB=postgres://user:password@postgres:5432/reseolio
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
+      - OTEL_EXPORTER_OTLP_ENDPOINT=
     links:
       - jaeger
     stdin_open: true
@@ -164,7 +164,7 @@ services:
     command: >
       sh -c "
         echo '==> Starting Reseolio server with DEBUG logging...' &&
-        export RUST_LOG=debug &&
+        export RUST_LOG=warn &&
         reseolio &
         sleep 2 &&
         echo '==> Server ready! Container will stay alive.' &&

@@ -220,6 +220,17 @@ export class Reseolio extends EventEmitter {
             options,
         };
 
+        // If already connected, re-register worker capabilities with the server
+        // This handles the case where durable() is called after start()
+        if (this.connected && this.workerStream) {
+            this.workerStream.write({
+                workerId: this.workerId,
+                names: Object.keys(this.registry),
+                concurrency: this.config.workerConcurrency,
+            });
+            console.debug(`[Reseolio] Re-registered worker capabilities with new handler: ${name}`);
+        }
+
         // Return wrapped function that enqueues jobs
         // Last parameter can optionally be JobOptions for per-execution config
         const durableFunc = async (...args: [...TArgs, JobOptions?]): Promise<JobHandle<TResult>> => {
@@ -300,6 +311,9 @@ export class Reseolio extends EventEmitter {
                     }
 
                     // Subscribe immediately to catch fast-completing jobs
+                    // Always track subscription even if stream is down - it will be sent on reconnect
+                    this.subscribedJobs.add(response.jobId);
+
                     if (this.subscriptionStream) {
                         this.subscriptionStream.write({
                             jobIds: [response.jobId],
@@ -476,6 +490,9 @@ export class Reseolio extends EventEmitter {
         });
     }
 
+
+    private subscribedJobs = new Set<string>(); // jobs waiting for completion notification
+
     /**
      * Start subscription stream for job completion notifications
      */
@@ -483,10 +500,25 @@ export class Reseolio extends EventEmitter {
         const call = this.grpcClient.SubscribeToJobs();
         this.subscriptionStream = call;
 
+        // Resubscribe to all tracked jobs (crucial for recovering from reconnections)
+        const pendingJobIds = Array.from(this.subscribedJobs);
+        if (pendingJobIds.length > 0) {
+            // Send in chunks to be safe, though gRPC should handle it
+            call.write({
+                jobIds: pendingJobIds,
+                unsubscribe: false,
+            });
+            console.debug(`[Reseolio] Resubscribed to ${pendingJobIds.length} pending jobs after stream restart`);
+        }
+
         // Handle incoming job completions
         call.on('data', (completion: any) => {
             // grpc-js uses camelCase for fields (job_id -> jobId)
             const jobId = completion.jobId || completion.job_id;
+
+            // Remove from tracking as we have received the result
+            this.subscribedJobs.delete(jobId);
+
             const pending = this.pendingResults.get(jobId);
 
             // Status 3 = SUCCESS, 5 = DEAD, 6 = CANCELLED
@@ -519,6 +551,13 @@ export class Reseolio extends EventEmitter {
                 this.completedResults.set(jobId, { result, error });
             }
 
+            // Emit job-specific events for JobHandle.result() listeners
+            if (error) {
+                this.emit(`job:failed:${jobId}`, error);
+            } else {
+                this.emit(`job:success:${jobId}`, result);
+            }
+
             this.emit('job:completion', completion);
         });
 
@@ -532,6 +571,9 @@ export class Reseolio extends EventEmitter {
 
         call.on('end', () => {
             this.emit('subscription:end');
+            console.debug('[Reseolio] Subscription stream ended (remote close). Reconnecting...');
+            // Reconnect after delay
+            setTimeout(() => this.startSubscriptionStream(), 1000);
         });
     }
 
@@ -556,6 +598,22 @@ export class Reseolio extends EventEmitter {
             // Register callback - subscription was already sent at enqueue time
             this.pendingResults.set(jobId, { resolve, reject });
         });
+    }
+
+    /**
+     * Try to get a cached result for a job
+     * Use this when a job might have completed before we started listening
+     */
+    tryGetResult<T>(jobId: string): { result?: T; error?: Error } | null {
+        const cached = this.completedResults.get(jobId);
+        if (cached) {
+            this.completedResults.delete(jobId);
+            return {
+                result: cached.result as T,
+                error: cached.error
+            };
+        }
+        return null;
     }
 
     private async executeJob(job: Job): Promise<void> {
@@ -597,6 +655,8 @@ export class Reseolio extends EventEmitter {
             });
 
             this.emit('job:success', job, result);
+            // Also emit job-specific event for JobHandle.result() listeners
+            this.emit(`job:success:${job.id}`, result);
         } catch (err) {
             const error = err instanceof Error ? err.message : String(err);
 
@@ -608,6 +668,8 @@ export class Reseolio extends EventEmitter {
             });
 
             this.emit('job:error', job, error);
+            // Also emit job-specific event for JobHandle.result() listeners
+            this.emit(`job:failed:${job.id}`, new Error(error));
         } finally {
             // Remove from active jobs
             this.activeJobs.delete(job.id);

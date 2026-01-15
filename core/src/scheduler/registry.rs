@@ -227,6 +227,30 @@ impl WorkerRegistry {
         }
     }
 
+    /// Update heartbeat and registered names for a worker
+    /// This is called when a worker registers new handlers dynamically
+    pub async fn update_worker_capabilities(
+        &self,
+        worker_id: &str,
+        names: Vec<String>,
+        concurrency: i32,
+    ) {
+        let mut inner = self.inner.write().await;
+        if let Some(worker) = inner.workers.get_mut(worker_id) {
+            let old_names = worker.registered_names.clone();
+            worker.last_heartbeat = Instant::now();
+            worker.registered_names = names.clone();
+            worker.concurrency = concurrency;
+
+            if old_names != names {
+                info!(
+                    "Worker {} updated capabilities: names={:?} (was {:?})",
+                    worker_id, names, old_names
+                );
+            }
+        }
+    }
+
     /// Get workers that haven't sent a heartbeat in the given duration
     pub async fn get_stale_workers(&self, timeout_secs: u64) -> Vec<String> {
         let inner = self.inner.read().await;

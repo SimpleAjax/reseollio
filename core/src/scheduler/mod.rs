@@ -134,10 +134,14 @@ impl<S: Storage> Scheduler<S> {
     }
 
     /// Schedule pending jobs to available workers
+    ///
+    /// Uses atomic claim_and_fetch_jobs with FOR UPDATE SKIP LOCKED (PostgreSQL)
+    /// to ensure no duplicate job execution in multi-node deployments.
+    /// Each worker gets jobs claimed atomically - other schedulers automatically
+    /// skip those rows and claim different jobs.
     async fn schedule_pending_jobs(&self) -> Result<()> {
         use std::time::Instant;
 
-        // debug!("[SCHEDULER] >>> Woke up to check for pending jobs");
         let total_start = Instant::now();
 
         // Phase 1: Get snapshot of workers state (cheap, in-memory check FIRST)
@@ -146,103 +150,75 @@ impl<S: Storage> Scheduler<S> {
         let snapshot_time = snapshot_start.elapsed();
 
         if workers.is_empty() {
-            // debug!("[SCHEDULER] No workers connected, skipping");
             return Ok(());
         }
 
-        // Check total available capacity before hitting DB
-        let total_capacity: usize = workers
+        // Build list of workers with available capacity
+        let workers_with_capacity: Vec<_> = workers
             .iter()
-            .map(|w| {
+            .filter_map(|w| {
                 let used = w.active_jobs.len() as i32;
-                (w.concurrency - used).max(0) as usize
+                let available = (w.concurrency - used).max(0) as usize;
+                if available > 0 {
+                    Some((w.clone(), available))
+                } else {
+                    None
+                }
             })
-            .sum();
+            .collect();
 
-        if total_capacity == 0 {
-            // All workers are saturated, skip DB fetch entirely
+        if workers_with_capacity.is_empty() {
             debug!("[SCHEDULER] All workers saturated (capacity=0), skipping DB fetch");
             return Ok(());
         }
 
+        let total_capacity: usize = workers_with_capacity.iter().map(|(_, cap)| cap).sum();
         debug!(
-            "[SCHEDULER] Workers have capacity={}, fetching pending jobs...",
+            "[SCHEDULER] {} workers have total capacity={}, claiming jobs...",
+            workers_with_capacity.len(),
             total_capacity
         );
 
-        // Phase 2: Fetch pending jobs from database (only if we have capacity)
-        let fetch_start = Instant::now();
-        let pending_jobs = self.storage.get_pending_jobs(self.batch_size).await?;
-        let fetch_time = fetch_start.elapsed();
-
-        debug!(
-            "[SCHEDULER] Fetched {} pending jobs from DB",
-            pending_jobs.len()
-        );
-
-        if pending_jobs.is_empty() {
-            return Ok(());
-        }
-
-        // Phase 3: Plan assignments locally (in-memory)
-        let plan_start = Instant::now();
-        let mut planned_assignments = Vec::new();
-        let mut claims = Vec::new();
-
-        // Track local usage to simulate capacity
-        let mut local_usage: std::collections::HashMap<String, i32> = workers
-            .iter()
-            .map(|w| (w.worker_id.clone(), w.active_jobs.len() as i32))
-            .collect();
-
-        for job in &pending_jobs {
-            // Find best worker using local simulation of capacity
-            let best_worker = workers
-                .iter()
-                .filter(|w| w.can_handle(&job.name))
-                .map(|w| {
-                    let used = *local_usage.get(&w.worker_id).unwrap_or(&0);
-                    let available = w.concurrency - used;
-                    (w, available)
-                })
-                .filter(|(_, available)| *available > 0)
-                .max_by_key(|(_, available)| *available);
-
-            if let Some((worker, _)) = best_worker {
-                claims.push((job.id.clone(), worker.worker_id.clone()));
-                planned_assignments.push((job, worker.worker_id.clone()));
-
-                // Decrement local capacity
-                *local_usage.entry(worker.worker_id.clone()).or_insert(0) += 1;
-            }
-        }
-        let plan_time = plan_start.elapsed();
-
-        if claims.is_empty() {
-            return Ok(());
-        }
-
-        // Phase 4: Execute batch claim in DB
+        // Phase 2: Atomic claim per worker using SKIP LOCKED
+        // Each worker gets its own atomic claim - no race conditions!
         let claim_start = Instant::now();
-        let claimed_ids = self.storage.claim_jobs(claims).await?;
-        let claim_time = claim_start.elapsed();
-        let claimed_set: std::collections::HashSet<_> = claimed_ids.iter().collect();
+        let mut total_claimed = 0;
+        let mut total_assigned = 0;
 
-        // Phase 5: Push jobs to workers
-        let push_start = Instant::now();
-        let mut assigned_count = 0;
+        for (worker, available_capacity) in workers_with_capacity {
+            // Limit to worker's capacity or batch size
+            let limit = available_capacity.min(self.batch_size);
 
-        for (job, worker_id) in planned_assignments {
-            if claimed_set.contains(&job.id) {
-                if let Some(tx) = self.registry.try_assign_job(&worker_id, &job.id).await {
+            // Get list of function names this worker can handle
+            let job_names: Vec<String> = worker.registered_names.iter().cloned().collect();
+
+            // Atomic claim: SELECT ... FOR UPDATE SKIP LOCKED + UPDATE in one transaction
+            let claimed_jobs = self
+                .storage
+                .claim_and_fetch_jobs(&worker.worker_id, &job_names, limit)
+                .await?;
+
+            if claimed_jobs.is_empty() {
+                continue;
+            }
+
+            total_claimed += claimed_jobs.len();
+
+            // Phase 3: Push claimed jobs to worker
+            for job in claimed_jobs {
+                if let Some(tx) = self
+                    .registry
+                    .try_assign_job(&worker.worker_id, &job.id)
+                    .await
+                {
                     match tx.try_send(job.clone()) {
                         Ok(()) => {
-                            assigned_count += 1;
+                            total_assigned += 1;
                         }
                         Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
                             warn!(
                                 "Worker {} channel full, resetting job {}",
-                                worker_id, job.id
+                                worker.worker_id, job.id
                             );
                             self.registry.job_completed(&job.id).await;
                             let _ = self.storage.reset_stale_job(&job.id).await;
@@ -250,35 +226,34 @@ impl<S: Storage> Scheduler<S> {
                         Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
                             warn!(
                                 "Worker {} disconnected, job {} recovered",
-                                worker_id, job.id
+                                worker.worker_id, job.id
                             );
                             self.registry.job_completed(&job.id).await;
+                            // Job will be picked up by stale recovery
                         }
                     }
                 } else {
                     warn!(
                         "Worker {} unavailable after claim, resetting job {}",
-                        worker_id, job.id
+                        worker.worker_id, job.id
                     );
                     let _ = self.storage.reset_stale_job(&job.id).await;
                 }
             }
         }
-        let push_time = push_start.elapsed();
+
+        let claim_time = claim_start.elapsed();
         let total_time = total_start.elapsed();
 
         // Log timing summary (only when we actually did work)
-        if assigned_count > 0 {
+        if total_assigned > 0 {
             info!(
-                "[TIMING] Scheduler cycle: total={}ms | fetch={}ms | snapshot={}us | plan={}us | claim={}ms | push={}us | jobs={} assigned={}",
+                "[TIMING] Scheduler cycle: total={}ms | snapshot={}us | claim+push={}ms | claimed={} assigned={}",
                 total_time.as_millis(),
-                fetch_time.as_millis(),
                 snapshot_time.as_micros(),
-                plan_time.as_micros(),
                 claim_time.as_millis(),
-                push_time.as_micros(),
-                pending_jobs.len(),
-                assigned_count
+                total_claimed,
+                total_assigned
             );
         }
 

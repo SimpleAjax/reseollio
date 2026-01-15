@@ -36,37 +36,101 @@ export class JobHandle<TResult = unknown> {
      * Uses push-based subscription (no polling) for efficient result notification.
      * Falls back to one-time check if push doesn't arrive within timeout.
      */
-    async result(timeoutMs: number = 30000): Promise<TResult> {
-        // Subscribe to completion notification immediately (no initial check)
-        const subscriptionPromise = this.client.subscribeToJob<TResult>(this.jobId);
+    async result(timeoutMs: number = 0, pollingInterval: number = 60000): Promise<TResult> {
+        return new Promise((resolve, reject) => {
+            let isResolved = false;
+            let pollTimer: NodeJS.Timeout;
+            let timeoutTimer: NodeJS.Timeout;
 
-        // Timeout fallback - if push doesn't arrive, check once
-        const timeoutPromise = new Promise<TResult>((resolve, reject) => {
-            setTimeout(async () => {
+            // 0. Check for cached result (fix for fast-completing jobs)
+            const cached = this.client.tryGetResult<TResult>(this.jobId);
+            if (cached) {
+                if (cached.error) {
+                    reject(cached.error);
+                } else {
+                    resolve(cached.result as TResult);
+                }
+                return;
+            }
+
+            const cleanup = () => {
+                isResolved = true;
+                this.client.off(`job:success:${this.jobId}`, successHandler);
+                this.client.off(`job:failed:${this.jobId}`, failedHandler);
+                clearTimeout(pollTimer);
+                clearTimeout(timeoutTimer);
+            };
+
+            const successHandler = (result: any) => {
+                // console.log('Job Suceeded with id', this.jobId);
+                if (isResolved) return;
+                cleanup();
+                resolve(result as TResult);
+            };
+
+            const failedHandler = (error: any) => {
+                if (isResolved) return;
+                cleanup();
+                reject(new Error(`Job failed: ${error?.message || error}`));
+            };
+
+            // 1. Subscribe to push notifications (PRIMARY mechanism)
+            this.client.on(`job:success:${this.jobId}`, successHandler);
+            this.client.on(`job:failed:${this.jobId}`, failedHandler);
+
+            // 2. Fallback polling (SECONDARY - only for missed push events)
+            const check = async () => {
+                if (isResolved) return;
                 try {
                     const job = await this.client.getJob(this.jobId);
                     const status = this.protoToStatus(job.status as unknown as number);
 
                     if (status === 'success') {
-                        const result = job.result
-                            ? JSON.parse(Buffer.from(job.result).toString())
-                            : null;
-                        resolve(result as TResult);
-                    } else if (status === 'dead') {
-                        reject(new Error(`Job failed after max retries: ${job.error}`));
-                    } else if (status === 'cancelled') {
-                        reject(new Error('Job was cancelled'));
-                    } else {
-                        reject(new Error(`Job still pending after ${timeoutMs}ms`));
+                        if (!isResolved) {
+                            cleanup();
+                            const result = job.result
+                                ? JSON.parse(Buffer.from(job.result).toString())
+                                : null;
+                            resolve(result as TResult);
+                        }
+                        return;
                     }
-                } catch (err) {
-                    reject(err);
-                }
-            }, timeoutMs);
-        });
 
-        // Return whichever completes first
-        return Promise.race([subscriptionPromise, timeoutPromise]);
+                    if (status === 'dead' || status === 'cancelled') {
+                        if (!isResolved) {
+                            cleanup();
+                            const msg = status === 'dead' ? `Job failed: ${job.error}` : 'Job was cancelled';
+                            reject(new Error(msg));
+                        }
+                        return;
+                    }
+
+                    // Job still pending/running - schedule next poll
+                    if (!isResolved) {
+                        pollTimer = setTimeout(check, pollingInterval);
+                    }
+
+                } catch (err) {
+                    // Ignore transient errors and retry
+                    if (!isResolved) {
+                        pollTimer = setTimeout(check, pollingInterval);
+                    }
+                }
+            };
+
+            // Start first poll AFTER the interval (give push notification time to arrive)
+            pollTimer = setTimeout(check, pollingInterval);
+
+            // 3. Optional hard timeout
+            if (timeoutMs > 0) {
+                timeoutTimer = setTimeout(() => {
+                    if (!isResolved) {
+                        cleanup();
+                        reject(new Error(`Job timed out after ${timeoutMs}ms`));
+                    }
+                }, timeoutMs);
+            }
+        });
     }
 
     /**
