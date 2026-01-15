@@ -1,131 +1,259 @@
 # Reseolio
 
-> **"Durable Execution for Modern Backends"**
+<div align="center">
+
+[![npm version](https://badge.fury.io/js/reseolio.svg)](https://www.npmjs.com/package/reseolio)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/SimpleAjax/reseollio/pulls)
+
+**Durable Execution for Modern Backends**
+
+*Make any function survive server crashes, restarts, and deployments.*
+
+[Quick Start](#-quick-start) • [Documentation](#-usage) • [Examples](#-real-world-examples) • [Contributing](#-contributing)
+
+</div>
+
+---
 
 Reseolio is an open-source, polyglot sidecar that brings **durable execution** to your existing application stack. Backed by **PostgreSQL**, it ensures your critical functions run to completion—even across server crashes, restarts, or node failures.
 
-It runs alongside your application as an ultra-lightweight **Rust binary**, managing job state globally while delegating actual code execution back to your application.
+It runs alongside your application as an ultra-lightweight **Rust binary** (~5MB RAM), managing job state globally while delegating actual code execution back to your application.
+
+## ⚡ 30-Second Quick Start
+
+```bash
+# Install
+npm install reseolio
+
+# That's it! No separate server to run.
+```
+
+```typescript
+import { Reseolio } from 'reseolio';
+
+const reseolio = new Reseolio({
+  storage: 'postgres://user:pass@localhost:5432/mydb'
+});
+
+await reseolio.start();
+
+// Make any function durable with one wrapper
+const sendEmail = reseolio.durable(
+  reseolio.namespace('notifications', 'email', 'send'),
+  async (to: string, subject: string) => {
+    await emailService.send(to, subject);
+    return { sent: true };
+  }
+);
+
+// Call it like a normal function - it's now crash-proof!
+const handle = await sendEmail('user@example.com', 'Welcome!');
+const result = await handle.result(); // { sent: true }
+```
+
+**That's it.** Your function now survives crashes, has automatic retries, and can be tracked.
+
+---
 
 ## 🚀 Why Reseolio?
 
 Building reliable distributed systems usually implies massive operational complexity. Reseolio eliminates the "glue code" and infrastructure bloat typically required for reliable background jobs.
 
-### 📉 The Reseolio Experience
+### 😴 Sleep Through the Night
+Server crashed? Deployment rolled back? `kill -9`? Reseolio doesn't care. Your jobs pick up exactly where they left off the moment your app comes back online.
 
+### ⏳ The `await` That Survives a Crash
+Turn complex background work into a simple async call:
+```typescript
+// Looks like normal code, but it's crash-proof and distributed
+const result = await generatePDFReport(data);
+```
 
-1.  **True Async Non-Blocking Architecture**:
-    Decouple your heavy operations from your API responses. Offload PDF generation, data processing, or third-party webhooks instantly. 
-    *   **No manual cron jobs** required to poll for "failed" webhooks.
-    *   **No custom state management** needed to track if an external API call succeeded or timed out.
-    Reseolio handles the retries, state, and scheduling out of the box.
+### 📦 Zero Infrastructure to Manage
+No Redis. No RabbitMQ. No message broker cluster. Just your existing **PostgreSQL** and a single binary.
 
-2.  **Sleep Through the Night (Invincible Jobs)**:
-    Server crashed? Deployment rolled back? `kill -9`? Reseolio doesn't care. Your jobs pick up exactly where they left off the moment your app comes back online.
+### 🏃 True Non-Blocking Architecture
+Decouple heavy operations from API responses. Offload PDF generation, webhooks, or data processing instantly.
 
-3.  **The "`await`" That Survives a Crash**:
-    Turn complex background work into a simple API call. You can `await` a job result that takes hours to finish or spans multiple server restarts.
-    ```typescript
-    // Looks synchronous, but it's non-blocking, durable, distributed, and retry-safe.
-    const result = await processHugeReport(data);
-    ```
+---
 
-4.  **Write Logic, Not Infrastructure**:
-    Stop configuring Dead Letter Queues, SQS visibility timeouts, or Redis eviction policies. Reseolio handles the queue, the retries, the state, and the storage. You just write the function.
+## 🌟 Real-World Examples
 
-5.  **Local Dev == Production**:
-    Since it's just a binary and Postgres, you can reproduce complex distributed failure modes on your laptop. No mocking cloud services. No "it works on my machine" issues.
+### E-Commerce: Order Processing Pipeline
+```typescript
+const processOrder = reseolio.durable(
+  reseolio.namespace('orders', 'fulfillment', 'process'),
+  async (orderId: string) => {
+    const order = await db.orders.findById(orderId);
+    
+    await paymentGateway.charge(order.customerId, order.total);
+    await inventory.reserve(order.items);
+    await shipping.createLabel(order.address);
+    await emailService.sendConfirmation(order.email);
+    
+    return { status: 'fulfilled' };
+  },
+  { maxAttempts: 5, backoff: 'exponential' }
+);
 
-### ⚡ Rust-Powered Efficiency
+// In your API handler
+app.post('/checkout', async (req, res) => {
+  const order = await db.orders.create(req.body);
+  
+  // Returns immediately - processing happens durably in background
+  await processOrder(order.id, { idempotencyKey: `order-${order.id}` });
+  
+  res.json({ orderId: order.id, status: 'processing' });
+});
+```
 
-*   **Ultra-Low Memory Footprint**: The core sidecar is written in **Rust**. It consumes negligible RAM (~megabytes), leaving your server's resources for your actual application logic.
-*   **In-Process Execution**: We don't spawn new heavyweight processes for every job. Your Node.js/Python/Go app executes the function directly, eliminating cold starts and process overhead.
+### SaaS: User Onboarding Workflow
+```typescript
+const onboardUser = reseolio.durable(
+  reseolio.namespace('users', 'onboarding', 'complete'),
+  async (userId: string) => {
+    await createDefaultWorkspace(userId);
+    await provisionStorage(userId);
+    await sendWelcomeEmail(userId);
+    await notifySlack(`New user: ${userId}`);
+    await analytics.track('user_onboarded', { userId });
+  }
+);
+```
+
+### Fintech: Reliable Webhook Delivery
+```typescript
+const deliverWebhook = reseolio.durable(
+  reseolio.namespace('webhooks', 'delivery', 'send'),
+  async (webhookId: string) => {
+    const webhook = await db.webhooks.findById(webhookId);
+    
+    const response = await fetch(webhook.url, {
+      method: 'POST',
+      body: JSON.stringify(webhook.payload),
+    });
+    
+    if (!response.ok) throw new Error(`Failed: ${response.status}`);
+    return { delivered: true };
+  },
+  {
+    maxAttempts: 10,
+    backoff: 'exponential',
+    initialDelayMs: 1000,  // 1s, 2s, 4s, 8s...
+    maxDelayMs: 3600000,   // Cap at 1 hour
+  }
+);
+```
+
+---
 
 ## ✨ Features
 
-- **🌍 Global Durability**: built on **PostgreSQL**, ensuring job state is persisted safely and accessible by any node in your cluster. If one node dies, another picks up the work immediately.
-- **🔄 Smart Retries**: Built-in exponential backoff, jitter, and configurable retry limits to handle transient failures gracefully.
-- **🆔 Idempotency**: Built-in deduplication ensures your jobs run exactly once per key, preventing double-billing or duplicate emails.
-- **🔍 Observability**: Query job status, history, and results via a simple API. (Dashboard coming soon).
-- **🗣️ Polyglot Design**: Language-agnostic gRPC protocol.
+| Feature | Description |
+|---------|-------------|
+| **🔄 Smart Retries** | Exponential, linear, or fixed backoff with jitter |
+| **🆔 Idempotency** | Built-in deduplication prevents duplicate jobs |
+| **🌍 Global State** | PostgreSQL-backed, accessible from any node |
+| **📊 Observability** | Query job status, history, and results via API |
+| **⚡ Low Overhead** | ~6ms enqueue latency, ~5MB sidecar memory |
+| **🔌 Polyglot** | Language-agnostic gRPC protocol (Node.js SDK today, Python/Go coming) |
 
-## 🆚 Comparison
-
-### vs. Message Queues (BullMQ, Celery, RabbitMQ)
-*   **Queues** are great for "fire and forget". You push a message, and maybe a worker picks it up. If the worker crashes, you might lose the job or get a duplicate.
-*   **Reseolio** tracks the *entire lifecycle*. It knows if a job is running, failed, or succeeded. It stores the result. You can `await` a job's completion. It's an execution engine, not just a pipe.
-
-### vs. Temporal / Cadence
-*   **Temporal** is powerful but typically requires a heavy cluster (Frontend, History, Matching, Worker services) + Cassandra/ES. It's designed for massive, complex workflows.
-*   **Reseolio** is the "minimalist" alternative. It uses your **existing Postgres** and a single sidecar binary. It provides the core promise of durable execution without the operational overhead of managing a new distributed cluster. Perfect for "Application-Local" durability or teams who want to keep their stack simple.
+---
 
 ## 📊 Benchmarks
 
-Reseolio adds minimal overhead to your application.
+| Metric | Avg (ms) | P95 (ms) | Notes |
+|--------|----------|----------|-------|
+| **Enqueue** | 6.23 | 9.57 | Time to persist job intent |
+| **Scheduling Lag** | 8.39 | 10.10 | Time until worker picks up |
+| **Full Round-Trip** | 9.85 | 11.50 | Total: enqueue → execute → result |
 
-| Metric | Avg (ms) | P95 (ms) | Impact |
-|--------|----------|----------|--------|
-| **Direct Execution** | ~0.001 | ~0.002 | Reference Baseline |
-| **Enqueue** | **6.23** | 9.57 | Added latency to your API call |
-| **Scheduling Lag** | **8.39** | 10.10 | Time until worker picks it up |
-| **Full Round-Trip** | **9.85** | 11.50 | Total time (Enqueue + Exec + Result) |
+> ~6ms overhead is the "cost of durability" — negligible for most API handlers.
 
-> **Context**: Tested on PostgreSQL. Enqueue overhead is the "cost of durability"—the time it takes to persist the job intent to disk before your code proceeds. ~6ms is negligible for most API handlers.
+---
 
-## 🚀 Quick Start
+## 🆚 Comparison
 
-### 1. Installation
+| Aspect | Message Queues (BullMQ, RabbitMQ) | Temporal/Cadence | **Reseolio** |
+|--------|-----------------------------------|------------------|--------------|
+| **Philosophy** | Fire and forget | Complex workflows | Simple durability |
+| **Infrastructure** | Redis / RabbitMQ cluster | 4+ services + Cassandra | **Just Postgres** |
+| **Learning Curve** | Moderate | Steep | **Minimal** |
+| **Result Tracking** | Manual | Built-in | **Built-in** |
+| **Await Job Result** | ❌ | ✅ | ✅ |
+| **Best For** | High-throughput pub/sub | Enterprise workflows | **App-local durability** |
 
-**Prerequisites:**
-- Node.js 18+
-- PostgreSQL Database
-- Rust 1.75+ (only if building from source)
+---
 
-**Install via npm:**
+## 📚 Full Usage
+
+### Installation
 
 ```bash
 npm install reseolio
 ```
 
-### 2. Usage
+**Prerequisites:**
+- Node.js 18+
+- PostgreSQL database
 
-Connect multiple instances of your app to the same Postgres database for a robust, distributed worker cluster.
-
-**Important:** Initialize Reseolio **once** at application startup. This spawns the lightweight sidecar process (~5MB RAM) which persists for the lifecycle of your app. Do not initialize it on every request.
+### Basic Setup
 
 ```typescript
 import { Reseolio } from 'reseolio';
 
-// 1. Initialize (The Rust sidecar will manage state in Postgres)
-// Run this ONCE (e.g., in your app.ts or index.ts)
+// Initialize ONCE at app startup
 const reseolio = new Reseolio({
-  storage: 'postgres://user:pass@localhost:5432/my_app_db', // ✅ Uses Global Postgres
+  storage: 'postgres://user:pass@localhost:5432/mydb',
 });
 
 await reseolio.start();
 
-// 2. Define a durable function
-// The actual logic runs HERE, in your Node process.
-const processPayment = reseolio.durable(
-  reseolio.namespace('billing', 'invoices', 'charge'),
-  async (userId: string, amount: number) => {
-    console.log(`Charging User ${userId} $${amount}...`);
-    
-    // Your business logic here...
-    // Direct access to your app's DB models!
-    await db.users.charge(userId, amount);
-    
-    return { success: true };
+// Define durable functions
+const myJob = reseolio.durable(
+  reseolio.namespace('domain', 'entity', 'action'),
+  async (arg1, arg2) => {
+    // Your logic here
+    return result;
   },
   {
-    maxAttempts: 5,
-    backoff: 'exponential',
+    maxAttempts: 5,           // Retry up to 5 times
+    backoff: 'exponential',   // exponential | linear | fixed
+    initialDelayMs: 1000,     // Start with 1s delay
+    timeoutMs: 30000,         // 30s timeout per attempt
   }
 );
 
-// 3. Trigger the job
-// This persists the intent to Postgres immediately.
-await processPayment('user_123', 99.00);
+// Call it
+const handle = await myJob(arg1, arg2);
+
+// Optionally await the result
+const result = await handle.result();
+
+// Or check status later
+const details = await handle.details();
+console.log(details.status); // 'pending' | 'running' | 'success' | 'dead'
 ```
+
+### Idempotency (De-duplication)
+
+```typescript
+// Even if called 10 times, only runs once per orderId
+await processPayment(amount, {
+  idempotencyKey: `charge-${orderId}`
+});
+```
+
+### Monitoring Events
+
+```typescript
+reseolio.on('job:start', (job) => console.log(`Started: ${job.name}`));
+reseolio.on('job:success', (job) => console.log(`Success: ${job.name}`));
+reseolio.on('job:error', (job, err) => console.log(`Error: ${err}`));
+```
+
+---
 
 ## 🏗️ Architecture
 
@@ -147,75 +275,86 @@ await processPayment('user_123', 99.00);
 │                 │ gRPC                 │        │                 │ gRPC             │
 │  ┌──────────────▼───────────────────┐  │        │  ┌──────────────▼───────────────┐  │
 │  │ 📦 Node.js Runtime               │  │        │  │ 📦 Node.js Runtime           │  │
-│  │    (Executes the actual code)    │  │        │  │    (Executes the actual code)│  │
+│  │    (Executes YOUR code)          │  │        │  │    (Executes YOUR code)      │  │
 │  └──────────────────────────────────┘  │        │  └──────────────────────────────┘  │
 └────────────────────────────────────────┘        └────────────────────────────────────┘
 ```
 
-1.  **Sidecar (Rust)**: Polls Postgres efficiently. When a job is ready, it signals the SDK via gRPC.
-2.  **Runtime (Node.js)**: Receives the signal and executes the Javascript function.
-3.  **Result**: The SDK sends the result back to the Sidecar, which marks it complete in Postgres.
+**How it works:**
+1. **Sidecar (Rust)**: Polls Postgres efficiently. When a job is ready, it signals the SDK via gRPC.
+2. **Runtime (Node.js)**: Receives the signal and executes your JavaScript function.
+3. **Result**: The SDK sends the result back to the Sidecar, which persists it to Postgres.
+
+---
 
 ## 💡 Best Practices
 
 ### 1. Use Namespaces 🏷️
-
-Namespaces are critical for preventing collisions in a distributed system. Since all jobs live in a single global table, using generic names like `sendEmail` is dangerous—if two different teams (e.g., Marketing and Auth) both register `sendEmail`, one might overwrite the other, or workers might steal each other's jobs.
-
-**Adopt a strict convention:** `domain:entity:action`
-
-*   ❌ `reseolio.durable('process-data', ...)` -> Ambiguous. Who processes what?
-*   ✅ `reseolio.namespace('billing', 'subscription', 'charge')` -> Crystal clear.
-    *   **Domain**: `billing`
-    *   **Entity**: `subscription`
-    *   **Action**: `charge`
-
-### 2. Idempotency is Key 🔑
-
-**Job Deduplication**:
-When you provide an `idempotencyKey`, Reseolio ensures that if the same job is pushed twice (e.g., user double-clicks "Pay"), it is **not** created again. Instead, Reseolio returns the handle to the *existng* job. This guarantees that your job logic is triggered only once per key.
-
-**Handler Durability**:
-While Reseolio prevents duplicate triggers, your worker code should ideally be idempotent too. In rare failure cases (e.g., network crash after execution but before acknowledgement), a job might successfully run but fail to report back, causing a retry.
-*   **Best Practice**: Ensure your DB updates can handle being re-run (e.g., use `ON CONFLICT DO NOTHING` or check state before updating).
+Prevent collisions with a strict naming convention: `domain:entity:action`
 
 ```typescript
-// Even if called 10 times, the customer is charged only once.
-await processPayment(amount, {
-  idempotencyKey: `charge-${orderId}` 
-});
+// ❌ Ambiguous
+reseolio.durable('process-data', ...)
+
+// ✅ Crystal clear
+reseolio.namespace('billing', 'subscription', 'charge')
 ```
 
-### 3. Keep Payloads Small 📦
-Arguments and return values are serialized (JSON) and stored in Postgres.
-*   ✅ Pass IDs: `processOrder({ orderId: '123' })`
-*   ❌ Pass Objects: `processOrder({ ...hugeUserObject, ...hugeOrderHistory })`
+### 2. Keep Payloads Small 📦
+```typescript
+// ✅ Pass IDs
+processOrder({ orderId: '123' })
 
-Fetching data inside the handler ensures you always have the freshest state and keeps DB bloat low.
+// ❌ Don't pass large objects
+processOrder({ ...hugeUserObject, ...hugeOrderHistory })
+```
 
-### 4. Handle Timeouts Gracefully ⏱️
-Set explicit timeouts for your functions. Reseolio has a default, but your business logic knows best.
-
+### 3. Set Explicit Timeouts ⏱️
 ```typescript
 reseolio.durable('...', handler, {
-  timeoutMs: 5000 // If it takes longer than 5s, fail and retry
+  timeoutMs: 5000 // Fail after 5s to prevent zombie jobs
 });
 ```
-This prevents "zombie jobs" from blocking your workers forever if an external API hangs.
+
+### 4. Write Idempotent Handlers
+In rare edge cases (network failure after execution but before ack), a job might retry. Make your handlers safe to re-run:
+```typescript
+// Use DB constraints
+await db.query('INSERT ... ON CONFLICT DO NOTHING');
+
+// Or check state first
+if (await isAlreadyProcessed(orderId)) return;
+```
+
+---
 
 ## 🔮 Roadmap
 
-- [ ] **SDKs**: Python and Go SDKs.
-- [ ] **Cron Scheduling**: Native support for cron expressions (`0 * * * *`) for recurring jobs.
-- [ ] **Visual Dashboard**: A standalone web UI to view job history, retries, and manual overrides.
+- [ ] **Python SDK**
+- [ ] **Go SDK**
+- [ ] **Cron Scheduling**: Native `0 * * * *` expressions
+- [ ] **Visual Dashboard**: Web UI for job monitoring
+
+---
 
 ## 🤝 Contributing
 
-We welcome contributions!
-1.  Fork the repo.
-2.  Create a feature branch.
-3.  Submit a Pull Request.
+We welcome contributions! 
+
+1. Fork the repo
+2. Create a feature branch (`git checkout -b feat/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feat/amazing-feature`)
+5. Open a Pull Request
+
+---
 
 ## 📄 License
 
-MIT
+MIT © [Reseolio Contributors](https://github.com/SimpleAjax/reseollio)
+
+---
+
+<div align="center">
+  <sub>Built with ❤️ for developers who want reliability without complexity.</sub>
+</div>

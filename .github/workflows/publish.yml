@@ -46,20 +46,23 @@ jobs:
 
       # Build Binary (with PostgreSQL support)
       - name: Build Binary
-        run: |
-          cd core
-          cargo build --release --features postgres --target ${{ matrix.target }}
+        run: cargo build --release --features postgres --target ${{ matrix.target }} -p reseolio-core
 
-      # Rename Binary (Shell-agnostic way is tricky, usually split steps or use shell specific)
+      # Debug: List target directory
+      - name: List build output
+        run: |
+          echo "Listing target directory:"
+          ls -la target/${{ matrix.target }}/release/ || true
+
+      # Rename Binary (Linux/Mac)
       - name: Rename Binary (Linux/Mac)
         if: matrix.os != 'windows-latest'
-        run: |
-          mv core/target/${{ matrix.target }}/release/reseolio ${{ matrix.artifact_name }}
+        run: mv target/${{ matrix.target }}/release/reseolio ${{ matrix.artifact_name }}
 
+      # Rename Binary (Windows)
       - name: Rename Binary (Windows)
         if: matrix.os == 'windows-latest'
-        run: |
-          mv core/target/${{ matrix.target }}/release/reseolio.exe ${{ matrix.artifact_name }}
+        run: mv target/${{ matrix.target }}/release/reseolio.exe ${{ matrix.artifact_name }}
 
       # Upload Artifact
       - uses: actions/upload-artifact@v4
