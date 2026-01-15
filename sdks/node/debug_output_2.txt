@@ -1,0 +1,33 @@
+Debugging Backoff Options...
+starting client : worker-467dd30a
+client started successfully : worker-467dd30a
+[Reseolio] Re-registered worker capabilities with new handler: debug:backoff:linear
+Enqueuing job...
+[DEBUG] Enqueue Request Options: {
+  "max_attempts": 0,
+  "backoff": "linear",
+  "initial_delay_ms": 5000,
+  "max_delay_ms": 0,
+  "timeout_ms": 0,
+  "jitter": 0
+}
+Enqueued.
+Job ran
+Job ran
+Job ran
+Job ran
+stopping client : worker-467dd30a
+stopped client successfully : worker-467dd30a
+[Reseolio] Subscription stream ended (remote close). Reconnecting...
+C:\Personal\Calling\Cimulink\Projects\reseollio\sdks\node\src\client.ts:511
+        const call = this.grpcClient.SubscribeToJobs();
+                                     ^
+
+
+TypeError: Cannot read properties of null (reading 'SubscribeToJobs')
+    at Reseolio.startSubscriptionStream (C:\Personal\Calling\Cimulink\Projects\reseollio\sdks\node\src\client.ts:511:38)
+    at Timeout._onTimeout (C:\Personal\Calling\Cimulink\Projects\reseollio\sdks\node\src\client.ts:591:35)
+    at listOnTimeout (node:internal/timers:594:17)
+    at process.processTimers (node:internal/timers:529:7)
+
+Node.js v22.12.0

@@ -80,73 +80,56 @@ Decouple heavy operations from API responses. Offload PDF generation, webhooks, 
 
 ## 🌟 Real-World Examples
 
-### E-Commerce: Order Processing Pipeline
+### Simple: Fire-and-Forget Email
 ```typescript
+const sendEmail = reseolio.durable(
+  reseolio.namespace('notifications', 'email', 'send'),
+  async (to: string, subject: string) => {
+    await emailService.send(to, subject);
+  }
+);
+
+// Returns immediately - email is guaranteed to be sent
+await sendEmail('user@example.com', 'Welcome!');
+```
+
+### Advanced: Multi-Step Workflow (Saga Pattern)
+
+For critical workflows with multiple steps, chain durable functions for per-step durability:
+
+```typescript
+// Each step is independently durable
+const chargePayment = reseolio.durable('orders:payment:charge', ...);
+const reserveInventory = reseolio.durable('orders:inventory:reserve', ...);
+const createShipping = reseolio.durable('orders:shipping:create', ...);
+
+// Orchestrator chains them
 const processOrder = reseolio.durable(
   reseolio.namespace('orders', 'fulfillment', 'process'),
   async (orderId: string) => {
-    const order = await db.orders.findById(orderId);
+    const payment = await chargePayment(orderId);
+    await payment.result();  // Wait for payment
     
-    await paymentGateway.charge(order.customerId, order.total);
-    await inventory.reserve(order.items);
-    await shipping.createLabel(order.address);
-    await emailService.sendConfirmation(order.email);
+    const inventory = await reserveInventory(orderId);
+    await inventory.result();  // Wait for inventory
+    
+    const shipping = await createShipping(orderId);
+    await shipping.result();  // Wait for shipping
     
     return { status: 'fulfilled' };
-  },
-  { maxAttempts: 5, backoff: 'exponential' }
-);
-
-// In your API handler
-app.post('/checkout', async (req, res) => {
-  const order = await db.orders.create(req.body);
-  
-  // Returns immediately - processing happens durably in background
-  await processOrder(order.id, { idempotencyKey: `order-${order.id}` });
-  
-  res.json({ orderId: order.id, status: 'processing' });
-});
-```
-
-### SaaS: User Onboarding Workflow
-```typescript
-const onboardUser = reseolio.durable(
-  reseolio.namespace('users', 'onboarding', 'complete'),
-  async (userId: string) => {
-    await createDefaultWorkspace(userId);
-    await provisionStorage(userId);
-    await sendWelcomeEmail(userId);
-    await notifySlack(`New user: ${userId}`);
-    await analytics.track('user_onboarded', { userId });
   }
 );
 ```
 
-### Fintech: Reliable Webhook Delivery
-```typescript
-const deliverWebhook = reseolio.durable(
-  reseolio.namespace('webhooks', 'delivery', 'send'),
-  async (webhookId: string) => {
-    const webhook = await db.webhooks.findById(webhookId);
-    
-    const response = await fetch(webhook.url, {
-      method: 'POST',
-      body: JSON.stringify(webhook.payload),
-    });
-    
-    if (!response.ok) throw new Error(`Failed: ${response.status}`);
-    return { delivered: true };
-  },
-  {
-    maxAttempts: 10,
-    backoff: 'exponential',
-    initialDelayMs: 1000,  // 1s, 2s, 4s, 8s...
-    maxDelayMs: 3600000,   // Cap at 1 hour
-  }
-);
-```
+> 📚 **[See EXAMPLES.md](./EXAMPLES.md)** for comprehensive patterns including:
+> - Fire-and-forget vs await patterns
+> - Chained durable functions (saga)
+> - Parallel fan-out execution
+> - Real-world scenarios (e-commerce, webhooks, onboarding)
+> - Best practices for idempotency
 
 ---
+
 
 ## ✨ Features
 

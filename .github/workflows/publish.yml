@@ -48,12 +48,6 @@ jobs:
       - name: Build Binary
         run: cargo build --release --features postgres --target ${{ matrix.target }} -p reseolio-core
 
-      # Debug: List target directory
-      - name: List build output
-        run: |
-          echo "Listing target directory:"
-          ls -la target/${{ matrix.target }}/release/ || true
-
       # Rename Binary (Linux/Mac)
       - name: Rename Binary (Linux/Mac)
         if: matrix.os != 'windows-latest'
