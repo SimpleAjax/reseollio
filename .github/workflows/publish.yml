@@ -1,0 +1,92 @@
+name: Publish to NPM
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-core:
+    name: Build Core (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: reseolio-linux-x64
+            target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            artifact_name: reseolio-darwin-x64
+            target: x86_64-apple-darwin
+          - os: windows-latest
+            artifact_name: reseolio-win32-x64.exe
+            target: x86_64-pc-windows-msvc
+
+    steps:
+      - uses: actions/checkout@v3
+      
+      # Setup Rust
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # Build Binary
+      - name: Build Binary
+        run: |
+          cd core
+          cargo build --release --target ${{ matrix.target }}
+
+      # Rename Binary (Shell-agnostic way is tricky, usually split steps or use shell specific)
+      - name: Rename Binary (Linux/Mac)
+        if: matrix.os != 'windows-latest'
+        run: |
+          mv core/target/${{ matrix.target }}/release/reseolio ${{ matrix.artifact_name }}
+
+      - name: Rename Binary (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          mv core/target/${{ matrix.target }}/release/reseolio.exe ${{ matrix.artifact_name }}
+
+      # Upload Artifact
+      - uses: actions/upload-artifact@v3
+        with:
+          name: binaries
+          path: ${{ matrix.artifact_name }}
+
+  publish-npm:
+    needs: build-core
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          registry-url: 'https://registry.npmjs.org'
+
+      # Download all artifacts from previous jobs into the vendor directory
+      - name: Download Binaries
+        uses: actions/download-artifact@v3
+        with:
+          name: binaries
+          path: sdks/node/vendor/
+
+      - name: Verify Binaries
+        run: |
+          ls -R sdks/node/vendor/
+          chmod +x sdks/node/vendor/reseolio-*
+
+      # Install & Build SDK
+      - name: Install & Build SDK
+        working-directory: sdks/node
+        run: |
+          npm ci
+          npm run build
+
+      # Publish to NPM
+      - name: Publish to NPM
+        working-directory: sdks/node
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

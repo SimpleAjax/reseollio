@@ -35,7 +35,8 @@
     },
     "files": [
         "dist",
-        "bin"
+        "bin",
+        "vendor"
     ],
     "bin": {
         "reseolio": "./bin/reseolio.js"
