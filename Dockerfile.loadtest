@@ -16,7 +16,7 @@
 #     DOCKER_BUILDKIT=1 docker-compose -f docker-compose.loadtest.yml build
 
 # Stage 1: Build Rust binary for Linux
-FROM rust:1.85-bookworm AS rust-builder
+FROM rust:1.91-bookworm AS rust-builder
 
 # Install protobuf compiler (needed by prost-build)
 RUN apt-get update && apt-get install -y --no-install-recommends protobuf-compiler \
