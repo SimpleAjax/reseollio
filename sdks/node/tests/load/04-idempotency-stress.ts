@@ -7,7 +7,7 @@
  */
 
 import './preload-tracing';
-import { Reseolio } from '../../sdks/node/dist/index.js';
+import { Reseolio } from '../../dist/index.js';
 
 async function main() {
     const NUM_UNIQUE_JOBS = 1000;
@@ -53,6 +53,9 @@ async function main() {
             }
         );
 
+        // Generate unique run ID to avoid interference from previous test runs
+        const runId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+
         // Submit phase - submit each job multiple times with same idempotency key
         console.log(`=> Submitting ${TOTAL_SUBMISSIONS} job requests (${NUM_UNIQUE_JOBS} unique)...`);
         const submitStart = Date.now();
@@ -61,7 +64,7 @@ async function main() {
         const submissionPromises: Promise<any>[] = [];
 
         for (let i = 0; i < NUM_UNIQUE_JOBS; i++) {
-            const orderId = `order-${i}`;
+            const orderId = `order-${runId}-${i}`;
             const idempotencyKey = `payment-${orderId}`;
 
             // Submit the same job multiple times

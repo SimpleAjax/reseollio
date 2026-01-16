@@ -5,7 +5,7 @@
  * Metrics: Retry delays, backoff correctness, eventual success
  */
 
-import { Reseolio } from '../../sdks/node/dist/index.js';
+import { Reseolio } from '../../dist/index.js';
 
 const NUM_JOBS = 1000;
 const FAILURE_RATE = 0.8; // 80% fail rate

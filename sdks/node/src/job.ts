@@ -35,8 +35,17 @@ export class JobHandle<TResult = unknown> {
      * 
      * Uses push-based subscription (no polling) for efficient result notification.
      * Falls back to one-time check if push doesn't arrive within timeout.
+     * Caches result after first successful retrieval.
      */
     async result(timeoutMs: number = 0, pollingInterval: number = 60000): Promise<TResult> {
+        // Return cached result if already resolved
+        if (this._resolved) {
+            if (this._error) {
+                throw new Error(this._error);
+            }
+            return this._result as TResult;
+        }
+
         return new Promise((resolve, reject) => {
             let isResolved = false;
             let pollTimer: NodeJS.Timeout;
@@ -45,9 +54,12 @@ export class JobHandle<TResult = unknown> {
             // 0. Check for cached result (fix for fast-completing jobs)
             const cached = this.client.tryGetResult<TResult>(this.jobId);
             if (cached) {
+                this._resolved = true;
                 if (cached.error) {
+                    this._error = cached.error.message || String(cached.error);
                     reject(cached.error);
                 } else {
+                    this._result = cached.result as TResult;
                     resolve(cached.result as TResult);
                 }
                 return;
@@ -65,13 +77,17 @@ export class JobHandle<TResult = unknown> {
                 // console.log('Job Suceeded with id', this.jobId);
                 if (isResolved) return;
                 cleanup();
+                this._resolved = true;
+                this._result = result as TResult;
                 resolve(result as TResult);
             };
 
             const failedHandler = (error: any) => {
                 if (isResolved) return;
                 cleanup();
-                reject(new Error(`Job failed: ${error?.message || error}`));
+                this._resolved = true;
+                this._error = `Job failed: ${error?.message || error}`;
+                reject(new Error(this._error));
             };
 
             // 1. Subscribe to push notifications (PRIMARY mechanism)
@@ -91,6 +107,8 @@ export class JobHandle<TResult = unknown> {
                             const result = job.result
                                 ? JSON.parse(Buffer.from(job.result).toString())
                                 : null;
+                            this._resolved = true;
+                            this._result = result as TResult;
                             resolve(result as TResult);
                         }
                         return;
@@ -100,6 +118,8 @@ export class JobHandle<TResult = unknown> {
                         if (!isResolved) {
                             cleanup();
                             const msg = status === 'dead' ? `Job failed: ${job.error}` : 'Job was cancelled';
+                            this._resolved = true;
+                            this._error = msg;
                             reject(new Error(msg));
                         }
                         return;

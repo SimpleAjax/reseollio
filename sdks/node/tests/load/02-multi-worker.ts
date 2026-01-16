@@ -6,7 +6,7 @@
  */
 
 import './preload-tracing';
-import { Reseolio } from '../../sdks/node/dist/index.js';
+import { Reseolio } from '../../dist/index.js';
 import { spawn, ChildProcess } from 'node:child_process';
 
 const NUM_JOBS = 10000;

@@ -7,7 +7,7 @@
  */
 
 import './preload-tracing';
-import { Reseolio } from '../../sdks/node/dist/index.js';
+import { Reseolio } from '../../dist/index.js';
 
 async function main() {
     const NUM_WORKFLOWS = 100;  // Number of concurrent workflows
@@ -25,7 +25,12 @@ async function main() {
     const reseolio = new Reseolio({
         storage: process.env.RESEOLIO_DB || 'sqlite://./load-test-chain.db',
         autoStart: false,
-        workerConcurrency: 20
+        // IMPORTANT: Concurrency must be high enough for orchestrators + child jobs.
+        // If all worker slots are taken by orchestrators waiting for children,
+        // children can't run -> deadlock.
+        // Rule: concurrency >= max_concurrent_orchestrators + max_concurrent_children
+        // Here: 100 orchestrators, each needs 1-3 child slots -> need ~200+ concurrency
+        workerConcurrency: 250
     });
 
     // Metrics
@@ -112,11 +117,13 @@ async function main() {
         );
 
         // Start all workflows concurrently
-        console.log(`=> Starting ${NUM_WORKFLOWS} workflows...`);
+        // Use unique run ID to avoid interference from previous runs
+        const runId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+        console.log(`=> Starting ${NUM_WORKFLOWS} workflows (run: ${runId})...`);
         const testStart = Date.now();
 
         const workflowHandles = await Promise.all(
-            Array.from({ length: NUM_WORKFLOWS }, (_, i) => runWorkflow(`wf-${i}`))
+            Array.from({ length: NUM_WORKFLOWS }, (_, i) => runWorkflow(`wf-${runId}-${i}`))
         );
 
         const enqueueTime = Date.now() - testStart;

@@ -11,8 +11,10 @@
         "debug": "tsx test-debug.ts",
         "test": "vitest run",
         "test:watch": "vitest",
-        "test:e2e": "vitest run --config vitest.e2e.config.ts",
+        "test:e2e": "tsx tests/e2e/run-all.ts",
         "test:e2e:restart": "node tests/e2e/restart-test.mjs",
+        "test:load": "tsx tests/load/run-all.ts",
+        "test:all": "npm run test:e2e && npm run test:load",
         "typecheck": "tsc --noEmit",
         "lint": "eslint src --ext .ts"
     },

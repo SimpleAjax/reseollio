@@ -123,11 +123,14 @@ impl Storage for PostgresStorage {
         let job = new_job.into_job();
         let options_json = serde_json::to_string(&job.options)?;
 
-        sqlx::query(
+        // Use INSERT ON CONFLICT DO NOTHING to handle race conditions with idempotency keys.
+        // If concurrent requests try to insert the same (name, idempotency_key), only one succeeds.
+        let result = sqlx::query(
             r#"
             INSERT INTO jobs (id, name, args, options, status, attempt, 
                               created_at, scheduled_at, idempotency_key)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            ON CONFLICT (name, idempotency_key) DO NOTHING
             "#,
         )
         .bind(&job.id)
@@ -142,6 +145,23 @@ impl Storage for PostgresStorage {
         .execute(&self.pool)
         .await
         .map_err(StorageError::from)?;
+
+        // If no rows were affected, the job already exists (lost the race)
+        // Return the existing job instead
+        if result.rows_affected() == 0 {
+            if let Some(ref key) = job.idempotency_key {
+                // Fetch and return the existing job
+                if let Some(existing) = self.get_job_by_idempotency_key(&job.name, key).await? {
+                    debug!(
+                        "Job with idempotency key {} already exists, returning existing: {}",
+                        key, existing.id
+                    );
+                    return Ok(existing);
+                }
+            }
+            // This shouldn't happen - conflict was triggered but job not found
+            // Fall through to return the original job structure
+        }
 
         debug!("Inserted job: {} ({})", job.id, job.name);
         Ok(job)

@@ -1,7 +1,7 @@
 /**
- * E2E Test Runner
- * Runs all E2E tests sequentially and reports overall results
- * Run: npx tsx tests/e2e/run-all.ts
+ * Load Test Runner
+ * Runs all load tests sequentially and reports overall results
+ * Run: npx tsx tests/load/run-all.ts
  */
 
 import { spawn } from 'child_process';
@@ -11,17 +11,13 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const tests = [
-    { file: '01-basic-job-lifecycle.ts', name: 'Basic Job Lifecycle' },
-    { file: '02-retry-and-failure-handling.ts', name: 'Retry and Failure Handling' },
-    { file: '03-idempotency-deduplication.ts', name: 'Idempotency and Deduplication' },
-    { file: '04-function-namespacing.ts', name: 'Function Namespacing' },
-    { file: '05-events-and-observability.ts', name: 'Events and Observability' },
-    { file: '06-workflow-patterns.ts', name: 'Workflow Patterns' },
-    { file: '07-timeout-handling.ts', name: 'Timeout Handling' },
-    { file: '08-latency-benchmarks.ts', name: 'Latency Benchmarks' },
-    { file: '09-chained-durables.ts', name: 'Chained Durable Functions (Saga)' },
-    { file: '10-fanout-parallel.ts', name: 'Fan-Out and Parallel Execution' },
-    { file: '11-result-caching.ts', name: 'Result Caching' },
+    { file: '01-throughput.ts', name: 'Basic Throughput' },
+    { file: '02-multi-worker.ts', name: 'Multi-Worker Concurrency' },
+    { file: '03-retry-storm.ts', name: 'Retry Storm' },
+    { file: '04-idempotency-stress.ts', name: 'Idempotency Stress' },
+    { file: '05-long-running-jobs.ts', name: 'Long-Running Jobs' },
+    { file: '06-burst-traffic.ts', name: 'Burst Traffic' },
+    { file: '07-chained-workflows.ts', name: 'Chained Workflows' },
 ];
 
 interface TestResult {
@@ -66,9 +62,9 @@ async function runTest(testFile: string, testName: string): Promise<TestResult> 
 
 async function main() {
     console.log('═'.repeat(60));
-    console.log('🧪 RESEOLIO E2E TEST SUITE');
+    console.log('🚀 RESEOLIO LOAD TEST SUITE');
     console.log('═'.repeat(60));
-    console.log(`\nRunning ${tests.length} test files...\n`);
+    console.log(`\nRunning ${tests.length} load tests...\n`);
 
     const results: TestResult[] = [];
     const overallStart = Date.now();
@@ -82,14 +78,14 @@ async function main() {
         results.push(result);
 
         // Small delay between tests to allow cleanup
-        await new Promise(r => setTimeout(r, 1000));
+        await new Promise(r => setTimeout(r, 2000));
     }
 
     const overallDuration = Date.now() - overallStart;
 
     // Summary
     console.log('\n' + '═'.repeat(60));
-    console.log('📊 TEST SUITE SUMMARY');
+    console.log('📊 LOAD TEST SUITE SUMMARY');
     console.log('═'.repeat(60));
 
     const passed = results.filter(r => r.passed);
@@ -102,18 +98,18 @@ async function main() {
     });
 
     console.log('\n' + '─'.repeat(60));
-    console.log(`  Total:    ${results.length} test files`);
+    console.log(`  Total:    ${results.length} load tests`);
     console.log(`  Passed:   ${passed.length}`);
     console.log(`  Failed:   ${failed.length}`);
     console.log(`  Duration: ${(overallDuration / 1000).toFixed(1)}s`);
     console.log('─'.repeat(60));
 
     if (failed.length > 0) {
-        console.log('\n❌ SOME TESTS FAILED');
+        console.log('\n❌ SOME LOAD TESTS FAILED');
         failed.forEach(f => console.log(`   - ${f.file}`));
         process.exit(1);
     } else {
-        console.log('\n🎉 ALL TESTS PASSED!');
+        console.log('\n🎉 ALL LOAD TESTS PASSED!');
         process.exit(0);
     }
 }

@@ -1,5 +1,5 @@
 
-import { initTracing } from '../../sdks/node/src/tracing';
+import { initTracing } from '../../src/tracing';
 
 const serviceName = process.env.WORKER_ID
     ? `reseolio-worker-${process.env.WORKER_ID}`

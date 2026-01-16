@@ -6,7 +6,7 @@
  */
 
 import './preload-tracing';
-import { Reseolio } from '../../sdks/node/dist/index.js';
+import { Reseolio } from '../../dist/index.js';
 
 async function main() {
     const NUM_JOBS = 10000;

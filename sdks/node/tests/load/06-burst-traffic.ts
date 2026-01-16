@@ -7,7 +7,7 @@
  */
 
 import './preload-tracing';
-import { Reseolio } from '../../sdks/node/dist/index.js';
+import { Reseolio } from '../../dist/index.js';
 
 async function main() {
     const BURST_SIZE = 500;      // Jobs per burst
