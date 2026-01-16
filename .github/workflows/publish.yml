@@ -4,40 +4,58 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (skip npm publish)'
+        required: false
+        default: 'false'
 
 jobs:
   build-core:
-    name: Build Core (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    name: Build Core (${{ matrix.os }}-${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: linux
+            arch: x64
+            runner: ubuntu-latest
             artifact_name: reseolio-linux-x64
             target: x86_64-unknown-linux-gnu
-          - os: macos-latest
+          - os: darwin
+            arch: x64
+            runner: macos-13
             artifact_name: reseolio-darwin-x64
             target: x86_64-apple-darwin
-          - os: windows-latest
+          - os: darwin
+            arch: arm64
+            runner: macos-latest
+            artifact_name: reseolio-darwin-arm64
+            target: aarch64-apple-darwin
+          - os: win32
+            arch: x64
+            runner: windows-latest
             artifact_name: reseolio-win32-x64.exe
             target: x86_64-pc-windows-msvc
 
     steps:
       - uses: actions/checkout@v4
-      
+
       # Install Protocol Buffers compiler
       - name: Install protoc (Ubuntu)
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'linux'
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-      
+
       - name: Install protoc (macOS)
-        if: matrix.os == 'macos-latest'
+        if: matrix.os == 'darwin'
         run: brew install protobuf
-      
+
       - name: Install protoc (Windows)
-        if: matrix.os == 'windows-latest'
+        if: matrix.os == 'win32'
         run: choco install protoc
-      
+
       # Setup Rust
       - name: Install Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -50,18 +68,18 @@ jobs:
 
       # Rename Binary (Linux/Mac)
       - name: Rename Binary (Linux/Mac)
-        if: matrix.os != 'windows-latest'
+        if: matrix.os != 'win32'
         run: mv target/${{ matrix.target }}/release/reseolio ${{ matrix.artifact_name }}
 
       # Rename Binary (Windows)
       - name: Rename Binary (Windows)
-        if: matrix.os == 'windows-latest'
+        if: matrix.os == 'win32'
         run: mv target/${{ matrix.target }}/release/reseolio.exe ${{ matrix.artifact_name }}
 
       # Upload Artifact
       - uses: actions/upload-artifact@v4
         with:
-          name: binary-${{ matrix.os }}
+          name: binary-${{ matrix.os }}-${{ matrix.arch }}
           path: ${{ matrix.artifact_name }}
 
   publish-npm:
@@ -69,7 +87,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -85,8 +103,21 @@ jobs:
 
       - name: Verify Binaries
         run: |
-          ls -R sdks/node/vendor/
+          echo "=== Downloaded binaries ==="
+          ls -la sdks/node/vendor/
           chmod +x sdks/node/vendor/reseolio-*
+          echo ""
+          echo "=== Binary sizes ==="
+          du -h sdks/node/vendor/*
+
+      # Verify bin script exists
+      - name: Verify CLI script
+        run: |
+          if [ ! -f sdks/node/bin/reseolio.js ]; then
+            echo "Error: bin/reseolio.js not found"
+            exit 1
+          fi
+          chmod +x sdks/node/bin/reseolio.js
 
       # Install & Build SDK
       - name: Install & Build SDK
@@ -95,9 +126,33 @@ jobs:
           npm ci
           npm run build
 
+      # Dry run check
+      - name: Publish to NPM (Dry Run)
+        if: github.event.inputs.dry_run == 'true'
+        working-directory: sdks/node
+        run: |
+          echo "=== Dry run - would publish ==="
+          npm pack --dry-run
+          echo ""
+          echo "=== Package contents ==="
+          npm pack
+          tar -tzf *.tgz
+
       # Publish to NPM
       - name: Publish to NPM
+        if: github.event.inputs.dry_run != 'true'
         working-directory: sdks/node
         run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create GitHub Release
+        if: github.event.inputs.dry_run != 'true'
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            sdks/node/vendor/*
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
