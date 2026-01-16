@@ -163,11 +163,26 @@ const processOrder = reseolio.durable(
 | Aspect | Message Queues (BullMQ, RabbitMQ) | Temporal/Cadence | **Reseolio** |
 |--------|-----------------------------------|------------------|--------------|
 | **Philosophy** | Fire and forget | Complex workflows | Simple durability |
-| **Infrastructure** | Redis / RabbitMQ cluster | 4+ services + Cassandra | **Just Postgres** |
+| **Infrastructure** | Redis / RabbitMQ cluster | 4+ services + Cassandra | **Just PostgreSQL** |
 | **Learning Curve** | Moderate | Steep | **Minimal** |
 | **Result Tracking** | Manual | Built-in | **Built-in** |
 | **Await Job Result** | ❌ | ✅ | ✅ |
-| **Best For** | High-throughput pub/sub | Enterprise workflows | **App-local durability** |
+| **Multi-Node Support** | ✅ | ✅ | ✅ (via Postgres) |
+| **Best For** | High-throughput messaging | Enterprise orchestration | **90% of durability use cases** |
+
+### When to Choose Temporal Instead
+
+Temporal is an amazing tool for complex orchestration. Choose it if you need:
+
+- **Deterministic Replay** — Resume mid-workflow after crashes (Reseolio restarts from the beginning)
+- **Multi-Month Workflows** — Workflows that pause for weeks waiting for human approval
+- **Signals & Queries** — Send events to or query running workflows
+- **Built-in Compensation** — Native saga rollback primitives
+- **Workflow Versioning** — Deploy new code without breaking in-flight workflows
+
+For most applications—processing payments, sending emails, syncing with external APIs, running background tasks—you don't need these features. Reseolio gives you **90% of the durability benefits with 10% of the complexity**.
+
+> 💡 **Roadmap:** We're exploring simplified patterns for long-running workflows and compensation in future releases. Our goal is to bring the power of durable execution to everyone, not just teams with dedicated platform engineers.
 
 ---
 
