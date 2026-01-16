@@ -1,6 +1,6 @@
 {
     "name": "reseolio",
-    "version": "0.1.1",
+    "version": "0.1.2",
     "description": "The Durable Execution for Modern Backends - Node.js SDK",
     "main": "dist/index.js",
     "types": "dist/index.d.ts",
