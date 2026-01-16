@@ -74,6 +74,88 @@ Duplicates:       NO ✅
 
 ---
 
+### Test 3: Retry Storm (Jobs with 50% failure rate)
+
+```powershell
+npx tsx tests/load/03-retry-storm.ts
+```
+
+**What to watch:**
+- All retries happen correctly
+- Exponential backoff works
+- Eventually all jobs succeed or go DEAD
+
+---
+
+### Test 4: Idempotency Stress (Duplicate submissions)
+
+```powershell
+npx tsx tests/load/04-idempotency-stress.ts
+```
+
+**What to watch:**
+- Deduplication ratio (should be 5:1 for 5 duplicates per job)
+- No duplicate executions
+- All unique jobs complete
+
+**Expected output:**
+```
+Deduplication:
+  Ratio:                5.00:1
+  Efficiency:           80.0%
+✅ TEST PASSED
+```
+
+---
+
+### Test 5: Long-Running Jobs (Mixed fast/slow workload)
+
+```powershell
+npx tsx tests/load/05-long-running-jobs.ts
+```
+
+**What to watch:**
+- Fast jobs not blocked by slow jobs
+- All jobs complete within timeout
+- Concurrent execution works
+
+---
+
+### Test 6: Burst Traffic (Traffic spikes)
+
+```powershell
+npx tsx tests/load/06-burst-traffic.ts
+```
+
+**What to watch:**
+- System handles sudden load
+- Queue drains between bursts
+- Recovery after spike
+
+---
+
+### Test 7: Chained Workflows (Saga pattern at scale)
+
+```powershell
+npx tsx tests/load/07-chained-workflows.ts
+```
+
+**What to watch:**
+- Chain overhead (ms per step beyond execution time)
+- All workflows complete in order
+- No deadlocks under concurrency
+
+**Expected output:**
+```
+Overhead Analysis:
+  Theoretical min:  60ms (3 steps × 20ms)
+  Actual average:   85.23ms
+  Chain overhead:   25.23ms
+✅ TEST PASSED
+```
+
+---
+
 ## Creating Custom Tests
 
 ### Template
