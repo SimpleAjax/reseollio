@@ -716,6 +716,31 @@ impl Storage for SqliteStorage {
 
         Ok((jobs, total))
     }
+
+    async fn retry_job(&self, job_id: &str) -> Result<bool> {
+        let conn = self.conn.lock().await;
+        let now = Utc::now().timestamp();
+
+        // Only allow retrying DEAD or FAILED jobs
+        let rows = conn
+            .execute(
+                r#"
+            UPDATE jobs 
+            SET status = 'PENDING', 
+                attempt = 0,
+                scheduled_at = ?2,
+                started_at = NULL,
+                completed_at = NULL,
+                error = NULL,
+                worker_id = NULL
+            WHERE id = ?1 AND status IN ('DEAD', 'FAILED')
+            "#,
+                params![job_id, now],
+            )
+            .map_err(StorageError::from)?;
+
+        Ok(rows > 0)
+    }
 }
 
 /// Convert a database row to a Job struct

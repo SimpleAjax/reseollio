@@ -21,6 +21,9 @@ service Reseolio {
   // Cancel a pending job
   rpc CancelJob(CancelRequest) returns (CancelResponse);
   
+  // Retry a dead/failed job (resets to PENDING with attempt=0)
+  rpc RetryJob(RetryRequest) returns (RetryResponse);
+  
   // List jobs with filtering
   rpc ListJobs(ListJobsRequest) returns (ListJobsResponse);
   
@@ -68,8 +71,11 @@ message Job {
   JobStatus status = 6;         // Current job status
   string error = 7;             // Last error message (if failed)
   bytes result = 8;             // Serialized result (if success)
-  int64 created_at = 9;         // Unix timestamp of creation
-  int64 scheduled_at = 10;      // Unix timestamp of next scheduled run
+  int64 created_at = 9;         // Unix timestamp (ms) of creation
+  int64 scheduled_at = 10;      // Unix timestamp (ms) of next scheduled run
+  int64 started_at = 11;        // Unix timestamp (ms) when job started (0 if not started)
+  int64 completed_at = 12;      // Unix timestamp (ms) when job completed (0 if not completed)
+  int32 max_attempts = 13;      // Maximum retry attempts
 }
 
 enum JobStatus {
@@ -115,6 +121,17 @@ message CancelRequest {
 message CancelResponse {
   bool success = 1;             // True if job was cancelled
   string message = 2;           // Error message if cancellation failed
+}
+
+// === Retry Messages ===
+
+message RetryRequest {
+  string job_id = 1;            // Job to retry
+}
+
+message RetryResponse {
+  bool success = 1;             // True if job was reset to pending
+  string message = 2;           // Error message if retry failed
 }
 
 // === List Messages ===

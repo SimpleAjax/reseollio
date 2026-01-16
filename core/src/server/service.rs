@@ -589,6 +589,30 @@ impl<S: Storage> Reseolio for ReseolioServer<S> {
         }))
     }
 
+    async fn retry_job(
+        &self,
+        request: Request<RetryRequest>,
+    ) -> Result<Response<RetryResponse>, Status> {
+        let job_id = request.into_inner().job_id;
+        debug!("[RETRY_JOB] Trying to retry job for job_id={}", job_id);
+
+        let retried = self.storage.retry_job(&job_id).await.map_err(to_status)?;
+
+        if retried {
+            // Notify scheduler to process the job immediately
+            self.scheduler_notify.notify_one();
+        }
+
+        Ok(Response::new(RetryResponse {
+            success: retried,
+            message: if retried {
+                "Job reset to pending".to_string()
+            } else {
+                "Job could not be retried (not in DEAD or FAILED state)".to_string()
+            },
+        }))
+    }
+
     async fn list_jobs(
         &self,
         request: Request<ListJobsRequest>,
@@ -710,6 +734,9 @@ fn job_to_proto(job: &crate::storage::InternalJob) -> proto::Job {
         result: job.result.clone().unwrap_or_default(),
         created_at: job.created_at.timestamp_millis(),
         scheduled_at: job.scheduled_at.timestamp_millis(),
+        started_at: job.started_at.map(|t| t.timestamp_millis()).unwrap_or(0),
+        completed_at: job.completed_at.map(|t| t.timestamp_millis()).unwrap_or(0),
+        max_attempts: job.options.max_attempts,
     }
 }
 

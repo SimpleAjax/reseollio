@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { StatusBadge } from "@/components/status-badge";
-import { type Job } from "@/lib/dummy-data";
+import { type Job } from "@/lib/api";
 import {
     Calendar,
     Clock,
@@ -29,9 +29,11 @@ interface JobDetailModalProps {
     job: Job | null;
     open: boolean;
     onOpenChange: (open: boolean) => void;
+    onRetry?: (job: Job) => void;
+    onCancel?: (job: Job) => void;
 }
 
-export function JobDetailModal({ job, open, onOpenChange }: JobDetailModalProps) {
+export function JobDetailModal({ job, open, onOpenChange, onRetry, onCancel }: JobDetailModalProps) {
     const [copied, setCopied] = useState(false);
 
     if (!job) return null;
@@ -42,32 +44,37 @@ export function JobDetailModal({ job, open, onOpenChange }: JobDetailModalProps)
         setTimeout(() => setCopied(false), 2000);
     };
 
-    const formatDuration = (ms?: number) => {
-        if (!ms) return "N/A";
+    const formatDuration = (ms?: number | null) => {
+        if (ms === null || ms === undefined) return "N/A";
         if (ms < 1000) return `${ms}ms`;
         return `${(ms / 1000).toFixed(2)}s`;
     };
 
-    // Sample job arguments and result for demonstration
-    const sampleArgs = {
-        userId: "user_abc123",
-        amount: 4999,
-        currency: "USD",
-        paymentMethod: "stripe",
-    };
-
-    const sampleResult = job.status === "SUCCESS"
-        ? {
-            transactionId: "txn_xyz789",
-            status: "completed",
-            processedAt: new Date().toISOString(),
+    // Parse args if available
+    let parsedArgs = null;
+    try {
+        if (job.args) {
+            parsedArgs = JSON.parse(job.args);
         }
-        : null;
+    } catch (e) {
+        parsedArgs = job.args;
+    }
 
+    // Parse result if available
+    let parsedResult = null;
+    try {
+        if (job.result) {
+            parsedResult = JSON.parse(job.result);
+        }
+    } catch (e) {
+        parsedResult = job.result;
+    }
+
+    // Generate sample attempts based on current attempt count
     const sampleAttempts = Array.from({ length: job.attempt }, (_, i) => ({
         attempt: i + 1,
-        startedAt: new Date(Date.now() - (job.attempt - i) * 60000),
-        completedAt: new Date(Date.now() - (job.attempt - i - 1) * 60000),
+        startedAt: new Date(job.createdAt + i * 60000),
+        completedAt: new Date(job.createdAt + (i + 1) * 60000),
         success: i + 1 === job.attempt && job.status === "SUCCESS",
         error: i + 1 !== job.attempt || job.status !== "SUCCESS" ? job.error : undefined,
     }));
@@ -108,34 +115,34 @@ export function JobDetailModal({ job, open, onOpenChange }: JobDetailModalProps)
                             <InfoItem
                                 icon={Calendar}
                                 label="Created At"
-                                value={format(job.createdAt, "PPpp")}
+                                value={format(new Date(job.createdAt), "PPpp")}
                             />
                             {job.scheduledAt && (
                                 <InfoItem
                                     icon={Clock}
                                     label="Scheduled At"
-                                    value={format(job.scheduledAt, "PPpp")}
+                                    value={format(new Date(job.scheduledAt), "PPpp")}
                                 />
                             )}
                             {job.startedAt && (
                                 <InfoItem
                                     icon={Clock}
                                     label="Started At"
-                                    value={format(job.startedAt, "PPpp")}
+                                    value={format(new Date(job.startedAt), "PPpp")}
                                 />
                             )}
                             {job.completedAt && (
                                 <InfoItem
                                     icon={CheckCircle2}
                                     label="Completed At"
-                                    value={format(job.completedAt, "PPpp")}
+                                    value={format(new Date(job.completedAt), "PPpp")}
                                 />
                             )}
-                            {job.duration && (
+                            {job.completedAt && job.startedAt && (
                                 <InfoItem
                                     icon={Clock}
                                     label="Duration"
-                                    value={formatDuration(job.duration)}
+                                    value={formatDuration(job.completedAt - job.startedAt)}
                                 />
                             )}
                             {job.idempotencyKey && (
@@ -159,14 +166,14 @@ export function JobDetailModal({ job, open, onOpenChange }: JobDetailModalProps)
                             Job Arguments
                         </h3>
                         <div className="bg-muted/50 rounded-lg p-4">
-                            <pre className="text-xs font-mono overflow-x-auto">
-                                {JSON.stringify(sampleArgs, null, 2)}
+                            <pre className="text-xs font-mono overflow-x-auto whitespace-pre-wrap">
+                                {parsedArgs ? JSON.stringify(parsedArgs, null, 2) : "No arguments"}
                             </pre>
                         </div>
                     </div>
 
                     {/* Result Section */}
-                    {job.status === "SUCCESS" && sampleResult && (
+                    {job.status === "SUCCESS" && parsedResult && (
                         <>
                             <Separator />
                             <div>
@@ -174,8 +181,8 @@ export function JobDetailModal({ job, open, onOpenChange }: JobDetailModalProps)
                                     Job Result
                                 </h3>
                                 <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-4">
-                                    <pre className="text-xs font-mono overflow-x-auto text-green-700 dark:text-green-400">
-                                        {JSON.stringify(sampleResult, null, 2)}
+                                    <pre className="text-xs font-mono overflow-x-auto text-green-700 dark:text-green-400 whitespace-pre-wrap">
+                                        {JSON.stringify(parsedResult, null, 2)}
                                     </pre>
                                 </div>
                             </div>
@@ -194,14 +201,6 @@ export function JobDetailModal({ job, open, onOpenChange }: JobDetailModalProps)
                                     <p className="text-sm text-red-700 dark:text-red-400 font-mono">
                                         {job.error}
                                     </p>
-                                    <div className="mt-3 text-xs text-muted-foreground">
-                                        <p className="font-mono">Stack trace:</p>
-                                        <pre className="mt-1 text-xs opacity-70">
-                                            {`  at processPayment (orders/payment.ts:42:15)
-  at async executeJob (worker.ts:89:22)
-  at async Worker.run (worker.ts:134:18)`}
-                                        </pre>
-                                    </div>
                                 </div>
                             </div>
                         </>
@@ -262,16 +261,32 @@ export function JobDetailModal({ job, open, onOpenChange }: JobDetailModalProps)
                     {/* Actions */}
                     <Separator />
                     <div className="flex items-center justify-end gap-2">
-                        {(job.status === "FAILED" || job.status === "DEAD") && (
-                            <Button variant="outline" className="gap-2">
+                        {(job.status === "FAILED" || job.status === "DEAD") && onRetry && (
+                            <Button
+                                variant="outline"
+                                className="gap-2"
+                                onClick={() => {
+                                    onRetry(job);
+                                    onOpenChange(false);
+                                }}
+                            >
                                 <RotateCcw className="h-4 w-4" />
                                 Retry Job
                             </Button>
                         )}
-                        <Button variant="destructive" className="gap-2">
-                            <Trash2 className="h-4 w-4" />
-                            Delete Job
-                        </Button>
+                        {job.status === "PENDING" && onCancel && (
+                            <Button
+                                variant="destructive"
+                                className="gap-2"
+                                onClick={() => {
+                                    onCancel(job);
+                                    onOpenChange(false);
+                                }}
+                            >
+                                <Trash2 className="h-4 w-4" />
+                                Cancel Job
+                            </Button>
+                        )}
                     </div>
                 </div>
             </DialogContent>

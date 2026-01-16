@@ -1,12 +1,13 @@
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import type { JobStatus } from "@/lib/dummy-data";
+import type { JobStatus } from "@/lib/api";
 import {
     Clock,
     PlayCircle,
     CheckCircle2,
     AlertCircle,
-    XCircle
+    XCircle,
+    Ban
 } from "lucide-react";
 
 interface StatusBadgeProps {
@@ -14,7 +15,7 @@ interface StatusBadgeProps {
     className?: string;
 }
 
-const statusConfig = {
+const statusConfig: Record<JobStatus, { label: string; icon: typeof Clock; className: string }> = {
     PENDING: {
         label: "Pending",
         icon: Clock,
@@ -40,10 +41,20 @@ const statusConfig = {
         icon: XCircle,
         className: "bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20",
     },
+    CANCELLED: {
+        label: "Cancelled",
+        icon: Ban,
+        className: "bg-gray-500/10 text-gray-600 dark:text-gray-400 border-gray-500/20",
+    },
 };
 
 export function StatusBadge({ status, className }: StatusBadgeProps) {
-    const config = statusConfig[status];
+    // Fallback for unknown statuses
+    const config = statusConfig[status] || {
+        label: status || "Unknown",
+        icon: Clock,
+        className: "bg-gray-500/10 text-gray-600 dark:text-gray-400 border-gray-500/20",
+    };
     const Icon = config.icon;
 
     return (

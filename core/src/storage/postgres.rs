@@ -831,6 +831,32 @@ impl Storage for PostgresStorage {
 
         Ok((jobs, total as i32))
     }
+
+    async fn retry_job(&self, job_id: &str) -> Result<bool> {
+        let now = Utc::now().timestamp();
+
+        // Only allow retrying DEAD or FAILED jobs
+        let result = sqlx::query(
+            r#"
+            UPDATE jobs 
+            SET status = 'PENDING', 
+                attempt = 0,
+                scheduled_at = $2,
+                started_at = NULL,
+                completed_at = NULL,
+                error = NULL,
+                worker_id = NULL
+            WHERE id = $1 AND status IN ('DEAD', 'FAILED')
+            "#,
+        )
+        .bind(job_id)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::from)?;
+
+        Ok(result.rows_affected() > 0)
+    }
 }
 
 fn row_to_job(row: &sqlx::postgres::PgRow) -> Result<InternalJob> {

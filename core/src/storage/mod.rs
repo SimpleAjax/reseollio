@@ -81,6 +81,9 @@ pub trait Storage: Clone + Send + Sync + 'static {
 
     /// List jobs with filters
     async fn list_jobs(&self, filter: JobFilter) -> Result<(Vec<InternalJob>, i32)>;
+
+    /// Retry a dead/failed job (resets status to PENDING and attempt to 0)
+    async fn retry_job(&self, job_id: &str) -> Result<bool>;
 }
 
 /// Convert unix timestamp to DateTime<Utc>
