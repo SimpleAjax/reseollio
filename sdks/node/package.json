@@ -1,7 +1,7 @@
 {
     "name": "reseolio",
-    "version": "0.1.2",
-    "description": "The Durable Execution for Modern Backends - Node.js SDK",
+    "version": "0.1.3",
+    "description": "Durable Execution for Modern Backends - Make any function survive crashes, restarts, and deployments",
     "main": "dist/index.js",
     "types": "dist/index.d.ts",
     "type": "module",
@@ -26,13 +26,23 @@
         "job",
         "background",
         "task",
-        "resilient"
+        "resilient",
+        "crash-recovery",
+        "fault-tolerant",
+        "workflow",
+        "scheduler",
+        "postgres",
+        "distributed"
     ],
-    "author": "",
+    "author": "SimpleAjax",
     "license": "MIT",
+    "homepage": "https://github.com/SimpleAjax/reseollio#readme",
+    "bugs": {
+        "url": "https://github.com/SimpleAjax/reseollio/issues"
+    },
     "repository": {
         "type": "git",
-        "url": "https://github.com/reseolio/reseolio.git",
+        "url": "git+https://github.com/SimpleAjax/reseollio.git",
         "directory": "sdks/node"
     },
     "files": [
