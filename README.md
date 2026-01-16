@@ -1,6 +1,8 @@
-# Reseolio
-
 <div align="center">
+
+<img src="./logo.png" alt="Reseolio Logo" width="180" />
+
+# Reseolio
 
 [![npm version](https://badge.fury.io/js/reseolio.svg)](https://www.npmjs.com/package/reseolio)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)

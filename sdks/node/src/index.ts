@@ -1,5 +1,5 @@
 /**
- * Reseolio - The SQLite of Durable Execution
+ * Reseolio - The Durable Execution for Modern Backends
  * 
  * Node.js SDK for durable function execution
  */

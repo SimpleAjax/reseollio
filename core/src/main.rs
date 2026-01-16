@@ -1,4 +1,4 @@
-//! Reseolio Core - The SQLite of Durable Execution
+//! Reseolio Core - The Durable Execution for Modern Backends
 //!
 //! This is the main entry point for the reseolio-core binary.
 //! It starts the gRPC server and push-based job scheduler.
@@ -46,7 +46,7 @@ use storage::Storage;
 use tokio::sync::Notify;
 use tracing::info;
 
-/// The SQLite of Durable Execution
+/// The Durable Execution for Modern Backends
 ///
 /// Reseolio is a lightweight sidecar for durable function execution.
 /// It persists function calls to SQLite and ensures they run to completion,

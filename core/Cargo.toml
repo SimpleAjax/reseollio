@@ -3,7 +3,7 @@ name = "reseolio-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "The SQLite of Durable Execution - Core Engine"
+description = "The Durable Execution for Modern Backends - Core Engine"
 
 [dependencies]
 tokio = { workspace = true }
