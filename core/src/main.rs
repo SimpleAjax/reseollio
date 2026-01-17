@@ -33,6 +33,7 @@
 //! ```
 
 mod error;
+mod metrics;
 mod scheduler;
 mod server;
 mod storage;
@@ -110,11 +111,30 @@ struct Config {
         help = "Number of pending jobs to fetch per scheduler cycle"
     )]
     batch_size: usize,
+
+    /// Address for Prometheus metrics endpoint
+    #[arg(
+        long,
+        env = "RESEOLIO_METRICS_ADDR",
+        default_value = "0.0.0.0:9090",
+        help = "Address for Prometheus metrics endpoint (format: host:port)"
+    )]
+    metrics_addr: String,
+
+    /// Enable or disable Prometheus metrics
+    #[arg(
+        long,
+        env = "RESEOLIO_METRICS_ENABLED",
+        default_value_t = true,
+        help = "Enable Prometheus metrics endpoint"
+    )]
+    metrics_enabled: bool,
 }
 
 async fn run_with_storage<S: Storage>(
     config: Config,
     storage: S,
+    storage_type: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Run migrations
     storage.migrate().await?;
@@ -128,6 +148,21 @@ async fn run_with_storage<S: Storage>(
     let registry = WorkerRegistry::new();
     let scheduler_notify = Arc::new(Notify::new());
     let cron_shutdown_notify = Arc::new(Notify::new());
+
+    // Initialize Prometheus metrics registry (always create, but only start server if enabled)
+    let metrics_registry = Arc::new(metrics::MetricsRegistry::new(
+        env!("CARGO_PKG_VERSION"),
+        storage_type,
+    ));
+
+    // Start metrics HTTP server if enabled
+    let metrics_handle = if config.metrics_enabled {
+        let metrics_addr: SocketAddr = config.metrics_addr.parse()?;
+        Some(metrics::start_metrics_server(metrics_registry.clone(), metrics_addr).await)
+    } else {
+        info!("Prometheus metrics disabled");
+        None
+    };
 
     // Start the push-based job scheduler
     let job_scheduler =
@@ -162,13 +197,24 @@ async fn run_with_storage<S: Storage>(
     let addr: SocketAddr = config.listen_addr.parse()?;
     info!("gRPC server listening on {}", addr);
 
-    // Pass the schedule poll interval to the server for pre-scheduling optimization
+    // Pass the schedule poll interval and metrics to the server
     let poll_interval_std = std::time::Duration::from_secs(schedule_poll_interval.as_secs());
-    server::serve(storage, registry, scheduler_notify, addr, poll_interval_std).await?;
+    server::serve(
+        storage,
+        registry,
+        scheduler_notify,
+        addr,
+        poll_interval_std,
+        metrics_registry,
+    )
+    .await?;
 
     // Graceful shutdown
     job_scheduler_handle.abort();
     cron_scheduler_handle.abort();
+    if let Some(handle) = metrics_handle {
+        handle.abort();
+    }
     info!("Reseolio Core shutdown complete");
 
     Ok(())
@@ -249,7 +295,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         {
             let storage = storage::PostgresStorage::new(&config.database_url).await?;
             info!("Initialized PostgreSQL storage");
-            run_with_storage(config, storage).await?;
+            run_with_storage(config, storage, "postgres").await?;
         }
         #[cfg(not(feature = "postgres"))]
         {
@@ -263,7 +309,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Handle explicit sqlite:// or implicit file path
         let storage = storage::SqliteStorage::new(&path).await?;
         info!("Initialized SQLite storage: {}", path.display());
-        run_with_storage(config, storage).await?;
+        run_with_storage(config, storage, "sqlite").await?;
     }
 
     Ok(())

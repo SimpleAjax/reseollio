@@ -38,6 +38,8 @@ opentelemetry = "0.21"
 opentelemetry_sdk = { version = "0.21", features = ["rt-tokio"] }
 opentelemetry-otlp = { version = "0.14", features = ["tonic"] }
 opentelemetry-http = "0.10"
+prometheus = { workspace = true }
+axum = { workspace = true }
 
 [build-dependencies]
 tonic-build = "0.10"

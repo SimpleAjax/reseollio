@@ -5,6 +5,7 @@
 //! eliminating the thundering herd problem.
 
 use crate::error::ReseolioError;
+use crate::metrics::MetricsRegistry;
 use crate::scheduler::{WorkerInfo, WorkerRegistry};
 use crate::storage::{
     next_cron_time, JobFilter, JobOptions, JobResult, JobStatus, NewJob, Storage,
@@ -47,6 +48,8 @@ pub struct ReseolioServer<S: Storage> {
     completed_jobs_cache: Arc<RwLock<HashMap<String, CachedCompletion>>>,
     /// Poll interval for the cron scheduler (used for pre-scheduling optimization)
     schedule_poll_interval: std::time::Duration,
+    /// Prometheus metrics registry for observability
+    metrics: Arc<MetricsRegistry>,
 }
 
 impl<S: Storage> ReseolioServer<S> {
@@ -55,6 +58,7 @@ impl<S: Storage> ReseolioServer<S> {
         registry: WorkerRegistry,
         scheduler_notify: Arc<Notify>,
         schedule_poll_interval: std::time::Duration,
+        metrics: Arc<MetricsRegistry>,
     ) -> Self {
         // Channel size 10000 to buffer high spikes
         // Now includes job_id for subscriber notification
@@ -75,6 +79,9 @@ impl<S: Storage> ReseolioServer<S> {
 
         // Cache TTL: 60 seconds (plenty of time for subscription to arrive)
         let cache_ttl = std::time::Duration::from_secs(60);
+
+        // Clone metrics for batch processor
+        let metrics_clone = metrics.clone();
 
         // spawn batch processor
         tokio::spawn(async move {
@@ -156,6 +163,20 @@ impl<S: Storage> ReseolioServer<S> {
                             collect_time.as_millis(),
                             update_time.as_millis()
                         );
+
+                        // Record metrics for job status transitions
+                        for (_job_id, status) in &final_statuses {
+                            let status_str = match status {
+                                crate::storage::JobStatus::Success => "success",
+                                crate::storage::JobStatus::Dead => "dead",
+                                crate::storage::JobStatus::Cancelled => "cancelled",
+                                crate::storage::JobStatus::Pending => "pending",
+                                crate::storage::JobStatus::Running => "running",
+                                crate::storage::JobStatus::Failed => "failed",
+                            };
+                            // Use job_id as job_name for now (we could extract name from job later)
+                            metrics_clone.record_job_status(status_str, "batch_ack");
+                        }
 
                         // Build completions using the ACTUAL final statuses from storage
                         let completions: Vec<(String, proto::JobCompletion)> = final_statuses
@@ -269,6 +290,7 @@ impl<S: Storage> ReseolioServer<S> {
             job_subscribers,
             completed_jobs_cache,
             schedule_poll_interval,
+            metrics,
         }
     }
 
@@ -372,6 +394,9 @@ impl<S: Storage> Reseolio for ReseolioServer<S> {
             to_status(e)
         })?;
 
+        // Record metrics for new pending job
+        self.metrics.record_job_status("pending", &job.name);
+
         info!("[ENQUEUE_JOB] <<< Enqueued job: {} ({})", job.id, job.name);
 
         // Notify scheduler to process new job immediately
@@ -397,6 +422,9 @@ impl<S: Storage> Reseolio for ReseolioServer<S> {
 
         // Channel for pushing jobs to this worker
         let (tx, rx) = mpsc::channel(100);
+
+        // Clone metrics for the spawned task
+        let metrics_clone = self.metrics.clone();
 
         tokio::spawn(async move {
             let worker_id: String;
@@ -429,6 +457,9 @@ impl<S: Storage> Reseolio for ReseolioServer<S> {
                         "[POLL_JOBS] <<< Worker {} connected (concurrency={}, names={:?})",
                         worker_id, concurrency, registered_names
                     );
+
+                    // Record worker connection metric
+                    metrics_clone.worker_connected();
 
                     debug!("[POLL_JOBS] Notifying scheduler about new worker");
                     scheduler_notify.notify_one();
@@ -482,6 +513,9 @@ impl<S: Storage> Reseolio for ReseolioServer<S> {
                     }
                 }
             }
+
+            // Record worker disconnection metric
+            metrics_clone.worker_disconnected();
 
             scheduler_notify.notify_one();
         });

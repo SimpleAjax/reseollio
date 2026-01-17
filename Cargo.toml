@@ -25,3 +25,5 @@ async-trait = "0.1"
 rand = "0.8"
 tokio-stream = "0.1"
 clap = { version = "4.4", features = ["derive", "env"] }
+prometheus = "0.13"
+axum = "0.7"

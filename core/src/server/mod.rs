@@ -7,6 +7,7 @@ mod service;
 
 pub use service::ReseolioServer;
 
+use crate::metrics::MetricsRegistry;
 use crate::scheduler::WorkerRegistry;
 use crate::storage::Storage;
 use http; // For http types
@@ -45,10 +46,17 @@ pub async fn serve<S: Storage>(
     scheduler_notify: Arc<Notify>,
     addr: SocketAddr,
     schedule_poll_interval: std::time::Duration,
+    metrics: Arc<MetricsRegistry>,
 ) -> Result<(), tonic::transport::Error> {
     info!("Starting gRPC server on {}", addr);
 
-    let server = ReseolioServer::new(storage, registry, scheduler_notify, schedule_poll_interval);
+    let server = ReseolioServer::new(
+        storage,
+        registry,
+        scheduler_notify,
+        schedule_poll_interval,
+        metrics,
+    );
 
     // Middleware stack
     let layer = tower::ServiceBuilder::new()
