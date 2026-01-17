@@ -84,6 +84,56 @@ pub trait Storage: Clone + Send + Sync + 'static {
 
     /// Retry a dead/failed job (resets status to PENDING and attempt to 0)
     async fn retry_job(&self, job_id: &str) -> Result<bool>;
+
+    // === Schedule Methods for Cron Scheduling ===
+
+    /// Create a new schedule
+    async fn create_schedule(&self, schedule: NewSchedule) -> Result<Schedule>;
+
+    /// Get a schedule by ID
+    async fn get_schedule(&self, schedule_id: &str) -> Result<Option<Schedule>>;
+
+    /// Get a schedule by name (unique)
+    async fn get_schedule_by_name(&self, name: &str) -> Result<Option<Schedule>>;
+
+    /// List schedules with filters
+    async fn list_schedules(&self, filter: ScheduleFilter) -> Result<(Vec<Schedule>, i32)>;
+
+    /// Update a schedule's cron expression, timezone, or options
+    async fn update_schedule(
+        &self,
+        schedule_id: &str,
+        cron_expression: Option<&str>,
+        timezone: Option<&str>,
+        handler_options: Option<&JobOptions>,
+    ) -> Result<Option<Schedule>>;
+
+    /// Pause a schedule
+    async fn pause_schedule(&self, schedule_id: &str) -> Result<bool>;
+
+    /// Resume a paused schedule
+    async fn resume_schedule(&self, schedule_id: &str) -> Result<bool>;
+
+    /// Delete a schedule (soft delete - marks as deleted)
+    async fn delete_schedule(&self, schedule_id: &str) -> Result<bool>;
+
+    /// Get schedules that are due to run (active and next_run_at <= now)
+    async fn get_due_schedules(&self) -> Result<Vec<Schedule>>;
+
+    /// Update schedule's next_run_at and last_run_at after triggering
+    async fn update_schedule_after_trigger(
+        &self,
+        schedule_id: &str,
+        next_run_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<()>;
+
+    /// Insert a scheduled job with schedule reference (uses idempotency)
+    async fn insert_scheduled_job(
+        &self,
+        job: NewJob,
+        schedule_id: &str,
+        schedule_run_id: &str,
+    ) -> Result<(InternalJob, bool)>; // Returns (job, was_deduplicated)
 }
 
 /// Convert unix timestamp to DateTime<Utc>
@@ -116,4 +166,55 @@ pub fn calculate_backoff(options: &JobOptions, attempt: i32) -> i32 {
         // This prevents delays like 200ms from being truncated to 0 seconds
         (capped + 999) / 1000
     }
+}
+
+/// Calculate the next execution time for a cron expression
+///
+/// Uses the cron crate to parse the expression and find the next occurrence.
+/// Supports timezone-aware scheduling via chrono-tz.
+///
+/// # Arguments
+/// * `cron_expr` - A valid cron expression (5 or 6 fields)
+/// * `timezone` - IANA timezone name (e.g., "America/New_York", "UTC")
+/// * `after` - Calculate next run after this time
+///
+/// # Returns
+/// * `Ok(DateTime<Utc>)` - The next execution time in UTC
+/// * `Err(_)` - If the cron expression is invalid or no next time can be found
+pub fn next_cron_time(
+    cron_expr: &str,
+    timezone: &str,
+    after: chrono::DateTime<chrono::Utc>,
+) -> Result<chrono::DateTime<chrono::Utc>> {
+    use cron::Schedule;
+    use std::str::FromStr;
+
+    // Parse the cron expression
+    // The cron crate expects 6-7 fields, so we may need to prepend seconds
+    // Standard 5-field: minute hour day-of-month month day-of-week
+    // Cron crate 6-field: second minute hour day-of-month month day-of-week
+    let expr_parts: Vec<&str> = cron_expr.split_whitespace().collect();
+    let full_expr = if expr_parts.len() == 5 {
+        // Add "0" seconds to make it 6-field
+        format!("0 {}", cron_expr)
+    } else {
+        cron_expr.to_string()
+    };
+
+    let schedule = Schedule::from_str(&full_expr)
+        .map_err(|e| crate::error::ReseolioError::InvalidCronExpression(e.to_string()))?;
+
+    // Parse timezone
+    let tz: chrono_tz::Tz = timezone.parse().unwrap_or(chrono_tz::Tz::UTC);
+
+    // Convert 'after' to the target timezone
+    let after_in_tz = after.with_timezone(&tz);
+
+    // Find the next occurrence
+    let next = schedule.after(&after_in_tz).next().ok_or_else(|| {
+        crate::error::ReseolioError::InvalidCronExpression("No next occurrence found".to_string())
+    })?;
+
+    // Convert back to UTC
+    Ok(next.with_timezone(&chrono::Utc))
 }

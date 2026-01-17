@@ -20,6 +20,12 @@ pub enum ReseolioError {
     #[error("Job already exists with idempotency key: {0}")]
     DuplicateJob(String),
 
+    #[error("Invalid cron expression: {0}")]
+    InvalidCronExpression(String),
+
+    #[error("Schedule not found: {0}")]
+    ScheduleNotFound(String),
+
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
 }

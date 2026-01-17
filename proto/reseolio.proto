@@ -29,6 +29,29 @@ service Reseolio {
   
   // Subscribe to job completion events (push-based, no polling)
   rpc SubscribeToJobs(stream SubscribeRequest) returns (stream JobCompletion);
+
+  // === Schedule Management ===
+  
+  // Create a new cron schedule
+  rpc CreateSchedule(CreateScheduleRequest) returns (Schedule);
+  
+  // Get a schedule by ID
+  rpc GetSchedule(GetScheduleRequest) returns (Schedule);
+  
+  // List schedules with filtering
+  rpc ListSchedules(ListSchedulesRequest) returns (ListSchedulesResponse);
+  
+  // Update a schedule's cron expression, timezone, or options
+  rpc UpdateSchedule(UpdateScheduleRequest) returns (Schedule);
+  
+  // Pause a schedule (stop triggering)
+  rpc PauseSchedule(PauseScheduleRequest) returns (Schedule);
+  
+  // Resume a paused schedule
+  rpc ResumeSchedule(ResumeScheduleRequest) returns (Schedule);
+  
+  // Delete a schedule (soft delete)
+  rpc DeleteSchedule(DeleteScheduleRequest) returns (DeleteScheduleResponse);
 }
 
 // === Enqueue Messages ===
@@ -163,3 +186,72 @@ message JobCompletion {
   bytes result = 3;                 // Serialized result (if success)
   string error = 4;                 // Error message (if dead/failed)
 }
+
+// === Schedule Messages ===
+
+message Schedule {
+  string id = 1;                    // Schedule UUID
+  string name = 2;                  // Unique function namespace
+  string cron_expression = 3;       // Cron expression (e.g., "0 8 * * *")
+  string timezone = 4;              // IANA timezone (default: "UTC")
+  ScheduleStatus status = 5;        // Current status
+  int64 next_run_at = 6;            // Next trigger time (Unix ms)
+  int64 last_run_at = 7;            // Last trigger time (Unix ms, 0 if never)
+  int64 created_at = 8;             // Creation timestamp (Unix ms)
+  int64 updated_at = 9;             // Last update timestamp (Unix ms)
+  JobOptions handler_options = 10;  // Options applied to triggered jobs
+}
+
+enum ScheduleStatus {
+  SCHEDULE_STATUS_UNSPECIFIED = 0;
+  SCHEDULE_STATUS_ACTIVE = 1;
+  SCHEDULE_STATUS_PAUSED = 2;
+  SCHEDULE_STATUS_DELETED = 3;
+}
+
+message CreateScheduleRequest {
+  string name = 1;                  // Unique function namespace
+  string cron_expression = 2;       // Cron expression
+  string timezone = 3;              // IANA timezone (default: "UTC")
+  JobOptions handler_options = 4;   // Options applied to triggered jobs
+}
+
+message GetScheduleRequest {
+  string schedule_id = 1;           // Schedule ID or name
+}
+
+message ListSchedulesRequest {
+  string status_filter = 1;         // "active", "paused", or "all" (default: all except deleted)
+  int32 limit = 2;                  // Max results (default: 100)
+  int32 offset = 3;                 // Pagination offset
+}
+
+message ListSchedulesResponse {
+  repeated Schedule schedules = 1;
+  int32 total = 2;                  // Total matching schedules
+}
+
+message UpdateScheduleRequest {
+  string schedule_id = 1;           // Schedule to update
+  string cron_expression = 2;       // New cron expression (optional)
+  string timezone = 3;              // New timezone (optional)
+  JobOptions handler_options = 4;   // New options (optional)
+}
+
+message PauseScheduleRequest {
+  string schedule_id = 1;           // Schedule to pause
+}
+
+message ResumeScheduleRequest {
+  string schedule_id = 1;           // Schedule to resume
+}
+
+message DeleteScheduleRequest {
+  string schedule_id = 1;           // Schedule to delete
+}
+
+message DeleteScheduleResponse {
+  bool success = 1;                 // True if schedule was deleted
+  string message = 2;               // Error message if deletion failed
+}
+

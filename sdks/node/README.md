@@ -71,6 +71,7 @@ No Redis. No RabbitMQ. No message broker cluster. Just your existing **PostgreSQ
 | 🔄 **Smart Retries** | Exponential, linear, or fixed backoff with jitter |
 | 🆔 **Idempotency** | Built-in deduplication prevents duplicate jobs |
 | 🌍 **Global State** | PostgreSQL-backed, accessible from any node |
+| ⏰ **Cron Scheduling** | Schedule recurring jobs with timezone support |
 | 📊 **Observability** | Query job status, history, and results via API |
 | ⚡ **Low Overhead** | ~6ms enqueue latency, ~5MB sidecar memory |
 | 🔌 **Polyglot** | Language-agnostic gRPC protocol |
@@ -156,6 +157,30 @@ await processPayment(amount, {
 });
 ```
 
+### Cron Scheduling
+
+```typescript
+// Schedule a job to run daily at 8 AM New York time
+const dailyReport = await reseolio.schedule('reports:daily-summary', {
+  cron: '0 8 * * *',
+  timezone: 'America/New_York',
+});
+
+// Or use convenience methods
+const hourlyCleanup = await reseolio.hourly('cleanup:temp-files');
+const weeklyBackup = await reseolio.weekly('backups:database', 1, 2); // Monday at 2 AM
+
+// Manage schedules
+await dailyReport.pause();   // Stop triggering
+await dailyReport.resume();  // Resume triggering
+await dailyReport.update({ cron: '0 9 * * *' }); // Change to 9 AM
+await dailyReport.delete();  // Remove schedule
+
+// Get schedule info
+const nextRun = await dailyReport.nextRunAt();
+const status = await dailyReport.status(); // 'active' | 'paused'
+```
+
 ---
 
 ## 📖 API Reference
@@ -187,6 +212,28 @@ await processPayment(amount, {
 | `status()` | Get current status (`pending`/`running`/`success`/`dead`) |
 | `details()` | Get full job details including attempt history |
 | `cancel()` | Cancel a pending job |
+
+### `ScheduleHandle`
+
+| Method | Description |
+|--------|-------------|
+| `details()` | Get full schedule details |
+| `status()` | Get current status (`active`/`paused`/`deleted`) |
+| `pause()` | Pause the schedule (stops triggering) |
+| `resume()` | Resume a paused schedule |
+| `update(options)` | Update cron expression, timezone, or handler options |
+| `delete()` | Delete the schedule (soft delete) |
+| `nextRunAt()` | Get next scheduled run time |
+| `lastRunAt()` | Get last run time (null if never run) |
+
+### Convenience Schedule Methods
+
+| Method | Cron Expression | Description |
+|--------|-----------------|-------------|
+| `everyMinute(name)` | `* * * * *` | Run every minute |
+| `hourly(name)` | `0 * * * *` | Run every hour at minute 0 |
+| `daily(name, hour)` | `0 {hour} * * *` | Run daily at specified hour (default: midnight) |
+| `weekly(name, day, hour)` | `0 {hour} * * {day}` | Run weekly on day (0=Sun, 6=Sat) at hour |
 
 ### Events
 
@@ -280,9 +327,9 @@ if (await isAlreadyProcessed(orderId)) return;
 
 ## 🔮 Roadmap
 
-- [ ] Visual Dashboard (`npx reseolio ui`)
+- [x] Visual Dashboard
+- [x] Cron Scheduling
 - [ ] Prometheus Metrics
-- [ ] Cron Scheduling
 - [ ] Python SDK
 - [ ] Go SDK
 

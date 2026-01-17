@@ -73,3 +73,42 @@ export function protoToStatus(status: number): JobStatus {
         default: return 'pending';
     }
 }
+
+// === Schedule Types ===
+
+export type ScheduleStatus = 'active' | 'paused' | 'deleted';
+
+export interface Schedule {
+    id: string;
+    name: string;
+    cronExpression: string;
+    timezone: string;
+    status: ScheduleStatus;
+    nextRunAt: number;
+    lastRunAt: number;
+    createdAt: number;
+    updatedAt: number;
+    handlerOptions?: JobOptions;
+}
+
+export interface ScheduleOptions {
+    /** Cron expression (e.g., "0 8 * * *" for 8am daily) */
+    cron: string;
+    /** IANA timezone (default: "UTC") */
+    timezone?: string;
+    /** Options applied to triggered jobs */
+    handlerOptions?: JobOptions;
+}
+
+/**
+ * Convert proto schedule status number to ScheduleStatus
+ */
+export function protoToScheduleStatus(status: number): ScheduleStatus {
+    switch (status) {
+        case 1: return 'active';
+        case 2: return 'paused';
+        case 3: return 'deleted';
+        default: return 'active';
+    }
+}
+

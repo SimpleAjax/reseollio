@@ -29,8 +29,10 @@
 //! └─────────────────────────────────────────────────┘
 //! ```
 
+mod cron;
 mod registry;
 
+pub use cron::CronScheduler;
 pub use registry::{WorkerInfo, WorkerRegistry};
 
 use crate::error::Result;

@@ -170,3 +170,90 @@ pub struct JobFilter {
     pub order_by: Option<String>,
     pub ascending: bool,
 }
+
+// === Schedule Models for Cron Scheduling ===
+
+/// Schedule status enum
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ScheduleStatus {
+    Active,
+    Paused,
+    Deleted,
+}
+
+impl ScheduleStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ScheduleStatus::Active => "active",
+            ScheduleStatus::Paused => "paused",
+            ScheduleStatus::Deleted => "deleted",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "active" => Some(ScheduleStatus::Active),
+            "paused" => Some(ScheduleStatus::Paused),
+            "deleted" => Some(ScheduleStatus::Deleted),
+            _ => None,
+        }
+    }
+}
+
+impl Default for ScheduleStatus {
+    fn default() -> Self {
+        ScheduleStatus::Active
+    }
+}
+
+/// A persisted schedule for recurring jobs
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Schedule {
+    pub id: String,
+    pub name: String,                // Function namespace (unique identifier)
+    pub cron_expression: String,     // e.g., "0 8 * * *"
+    pub timezone: String,            // IANA timezone, default "UTC"
+    pub handler_options: JobOptions, // Options applied to each triggered job
+    pub status: ScheduleStatus,
+    pub next_run_at: DateTime<Utc>, // Pre-computed next trigger time
+    pub last_run_at: Option<DateTime<Utc>>, // Last trigger time
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Input for creating a new schedule
+#[derive(Debug, Clone)]
+pub struct NewSchedule {
+    pub name: String,
+    pub cron_expression: String,
+    pub timezone: Option<String>,
+    pub handler_options: Option<JobOptions>,
+}
+
+impl NewSchedule {
+    /// Create a Schedule from NewSchedule with generated ID and timestamps
+    pub fn into_schedule(self, next_run_at: DateTime<Utc>) -> Schedule {
+        let now = Utc::now();
+        Schedule {
+            id: Uuid::new_v4().to_string(),
+            name: self.name,
+            cron_expression: self.cron_expression,
+            timezone: self.timezone.unwrap_or_else(|| "UTC".to_string()),
+            handler_options: self.handler_options.unwrap_or_default(),
+            status: ScheduleStatus::Active,
+            next_run_at,
+            last_run_at: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+}
+
+/// Filter for listing schedules
+#[derive(Debug, Clone, Default)]
+pub struct ScheduleFilter {
+    pub status: Option<ScheduleStatus>,
+    pub limit: Option<i32>,
+    pub offset: Option<i32>,
+}

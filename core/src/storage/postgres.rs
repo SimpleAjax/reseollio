@@ -1,8 +1,8 @@
 //! PostgreSQL storage implementation
 
 use super::{
-    calculate_backoff, timestamp_to_datetime, InternalJob, JobFilter, JobOptions, JobResult,
-    JobStatus, NewJob, Storage,
+    calculate_backoff, next_cron_time, timestamp_to_datetime, InternalJob, JobFilter, JobOptions,
+    JobResult, JobStatus, NewJob, NewSchedule, Schedule, ScheduleFilter, ScheduleStatus, Storage,
 };
 use crate::error::{ReseolioError, Result, StorageError};
 use async_trait::async_trait;
@@ -109,6 +109,69 @@ impl Storage for PostgresStorage {
             r#"
             CREATE INDEX IF NOT EXISTS idx_jobs_running 
                 ON jobs(worker_id, started_at) WHERE status = 'RUNNING'
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::from)?;
+
+        // Add schedule reference columns if they don't exist (migration)
+        sqlx::query(
+            r#"
+            DO $$ 
+            BEGIN 
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                               WHERE table_name = 'jobs' AND column_name = 'schedule_id') THEN
+                    ALTER TABLE jobs ADD COLUMN schedule_id TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                               WHERE table_name = 'jobs' AND column_name = 'schedule_run_id') THEN
+                    ALTER TABLE jobs ADD COLUMN schedule_run_id TEXT;
+                END IF;
+            END $$;
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::from)?;
+
+        // Index for schedule-related jobs
+        sqlx::query(
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_jobs_schedule 
+                ON jobs(schedule_id) WHERE schedule_id IS NOT NULL
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::from)?;
+
+        // Create schedules table
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS schedules (
+                id              TEXT PRIMARY KEY,
+                name            TEXT NOT NULL UNIQUE,
+                cron_expression TEXT NOT NULL,
+                timezone        TEXT NOT NULL DEFAULT 'UTC',
+                handler_options TEXT NOT NULL,
+                status          TEXT NOT NULL DEFAULT 'active',
+                next_run_at     BIGINT NOT NULL,
+                last_run_at     BIGINT,
+                created_at      BIGINT NOT NULL,
+                updated_at      BIGINT NOT NULL
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::from)?;
+
+        // Index for efficient due schedule queries
+        sqlx::query(
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_schedules_next_run 
+                ON schedules(status, next_run_at)
             "#,
         )
         .execute(&self.pool)
@@ -857,6 +920,348 @@ impl Storage for PostgresStorage {
 
         Ok(result.rows_affected() > 0)
     }
+
+    // === Schedule Method Implementations ===
+
+    async fn create_schedule(&self, new_schedule: NewSchedule) -> Result<Schedule> {
+        // Calculate the first next_run_at
+        let next_run = next_cron_time(
+            &new_schedule.cron_expression,
+            new_schedule.timezone.as_deref().unwrap_or("UTC"),
+            Utc::now(),
+        )?;
+
+        let schedule = new_schedule.into_schedule(next_run);
+        let options_json = serde_json::to_string(&schedule.handler_options)?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO schedules (id, name, cron_expression, timezone, handler_options, 
+                                   status, next_run_at, last_run_at, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            "#,
+        )
+        .bind(&schedule.id)
+        .bind(&schedule.name)
+        .bind(&schedule.cron_expression)
+        .bind(&schedule.timezone)
+        .bind(&options_json)
+        .bind(schedule.status.as_str())
+        .bind(schedule.next_run_at.timestamp())
+        .bind(schedule.last_run_at.map(|t| t.timestamp()))
+        .bind(schedule.created_at.timestamp())
+        .bind(schedule.updated_at.timestamp())
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::from)?;
+
+        debug!("Created schedule: {} ({})", schedule.id, schedule.name);
+        Ok(schedule)
+    }
+
+    async fn get_schedule(&self, schedule_id: &str) -> Result<Option<Schedule>> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, name, cron_expression, timezone, handler_options, 
+                   status, next_run_at, last_run_at, created_at, updated_at
+            FROM schedules WHERE id = $1
+            "#,
+        )
+        .bind(schedule_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(StorageError::from)?;
+
+        match row {
+            Some(row) => Ok(Some(row_to_schedule(&row)?)),
+            None => Ok(None),
+        }
+    }
+
+    async fn get_schedule_by_name(&self, name: &str) -> Result<Option<Schedule>> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, name, cron_expression, timezone, handler_options, 
+                   status, next_run_at, last_run_at, created_at, updated_at
+            FROM schedules WHERE name = $1
+            "#,
+        )
+        .bind(name)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(StorageError::from)?;
+
+        match row {
+            Some(row) => Ok(Some(row_to_schedule(&row)?)),
+            None => Ok(None),
+        }
+    }
+
+    async fn list_schedules(&self, filter: ScheduleFilter) -> Result<(Vec<Schedule>, i32)> {
+        let mut builder = sqlx::QueryBuilder::new(
+            "SELECT id, name, cron_expression, timezone, handler_options, \
+             status, next_run_at, last_run_at, created_at, updated_at \
+             FROM schedules WHERE 1=1",
+        );
+
+        // Don't show deleted schedules by default
+        if let Some(status) = &filter.status {
+            builder.push(" AND status = ");
+            builder.push_bind(status.as_str().to_string());
+        } else {
+            builder.push(" AND status != 'deleted'");
+        }
+
+        builder.push(" ORDER BY next_run_at ASC");
+
+        if let Some(limit) = filter.limit {
+            builder.push(" LIMIT ");
+            builder.push_bind(limit as i64);
+        }
+
+        if let Some(offset) = filter.offset {
+            builder.push(" OFFSET ");
+            builder.push_bind(offset as i64);
+        }
+
+        let rows = builder
+            .build()
+            .fetch_all(&self.pool)
+            .await
+            .map_err(StorageError::from)?;
+
+        let mut schedules = Vec::new();
+        for row in rows {
+            schedules.push(row_to_schedule(&row)?);
+        }
+
+        // Count
+        let total: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM schedules WHERE status != 'deleted'")
+                .fetch_one(&self.pool)
+                .await
+                .map_err(StorageError::from)?;
+
+        Ok((schedules, total as i32))
+    }
+
+    async fn update_schedule(
+        &self,
+        schedule_id: &str,
+        cron_expression: Option<&str>,
+        timezone: Option<&str>,
+        handler_options: Option<&JobOptions>,
+    ) -> Result<Option<Schedule>> {
+        let now = Utc::now().timestamp();
+
+        // Get current schedule first
+        let current = match self.get_schedule(schedule_id).await? {
+            Some(s) if s.status != ScheduleStatus::Deleted => s,
+            _ => return Ok(None),
+        };
+
+        // Determine final values
+        let final_cron = cron_expression.unwrap_or(&current.cron_expression);
+        let final_tz = timezone.unwrap_or(&current.timezone);
+        let final_opts = handler_options
+            .cloned()
+            .unwrap_or(current.handler_options.clone());
+
+        // Recalculate next_run if cron or timezone changed
+        let new_next_run = if cron_expression.is_some() || timezone.is_some() {
+            next_cron_time(final_cron, final_tz, Utc::now())?
+        } else {
+            current.next_run_at
+        };
+
+        let opts_json = serde_json::to_string(&final_opts)?;
+
+        sqlx::query(
+            r#"
+            UPDATE schedules 
+            SET cron_expression = $1, timezone = $2, handler_options = $3,
+                next_run_at = $4, updated_at = $5
+            WHERE id = $6 AND status != 'deleted'
+            "#,
+        )
+        .bind(final_cron)
+        .bind(final_tz)
+        .bind(&opts_json)
+        .bind(new_next_run.timestamp())
+        .bind(now)
+        .bind(schedule_id)
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::from)?;
+
+        self.get_schedule(schedule_id).await
+    }
+
+    async fn pause_schedule(&self, schedule_id: &str) -> Result<bool> {
+        let now = Utc::now().timestamp();
+
+        let result = sqlx::query(
+            r#"
+            UPDATE schedules 
+            SET status = 'paused', updated_at = $2
+            WHERE id = $1 AND status = 'active'
+            "#,
+        )
+        .bind(schedule_id)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::from)?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    async fn resume_schedule(&self, schedule_id: &str) -> Result<bool> {
+        // Get the schedule to recalculate next_run_at
+        let schedule = match self.get_schedule(schedule_id).await? {
+            Some(s) if s.status == ScheduleStatus::Paused => s,
+            _ => return Ok(false),
+        };
+
+        let next_run = next_cron_time(&schedule.cron_expression, &schedule.timezone, Utc::now())?;
+        let now = Utc::now().timestamp();
+
+        let result = sqlx::query(
+            r#"
+            UPDATE schedules 
+            SET status = 'active', next_run_at = $2, updated_at = $3
+            WHERE id = $1
+            "#,
+        )
+        .bind(schedule_id)
+        .bind(next_run.timestamp())
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::from)?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    async fn delete_schedule(&self, schedule_id: &str) -> Result<bool> {
+        let now = Utc::now().timestamp();
+
+        let result = sqlx::query(
+            r#"
+            UPDATE schedules 
+            SET status = 'deleted', updated_at = $2
+            WHERE id = $1 AND status != 'deleted'
+            "#,
+        )
+        .bind(schedule_id)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::from)?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    async fn get_due_schedules(&self) -> Result<Vec<Schedule>> {
+        let now = Utc::now().timestamp();
+
+        let rows = sqlx::query(
+            r#"
+            SELECT id, name, cron_expression, timezone, handler_options, 
+                   status, next_run_at, last_run_at, created_at, updated_at
+            FROM schedules 
+            WHERE status = 'active' AND next_run_at <= $1
+            "#,
+        )
+        .bind(now)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(StorageError::from)?;
+
+        let mut schedules = Vec::new();
+        for row in rows {
+            schedules.push(row_to_schedule(&row)?);
+        }
+
+        Ok(schedules)
+    }
+
+    async fn update_schedule_after_trigger(
+        &self,
+        schedule_id: &str,
+        next_run_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<()> {
+        let now = Utc::now().timestamp();
+
+        sqlx::query(
+            r#"
+            UPDATE schedules 
+            SET next_run_at = $2, last_run_at = $3, updated_at = $3
+            WHERE id = $1
+            "#,
+        )
+        .bind(schedule_id)
+        .bind(next_run_at.timestamp())
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::from)?;
+
+        Ok(())
+    }
+
+    async fn insert_scheduled_job(
+        &self,
+        new_job: NewJob,
+        schedule_id: &str,
+        schedule_run_id: &str,
+    ) -> Result<(InternalJob, bool)> {
+        let job = new_job.into_job();
+        let options_json = serde_json::to_string(&job.options)?;
+
+        // Use INSERT ON CONFLICT DO NOTHING for idempotency
+        let result = sqlx::query(
+            r#"
+            INSERT INTO jobs (id, name, args, options, status, attempt, 
+                              created_at, scheduled_at, idempotency_key,
+                              schedule_id, schedule_run_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            ON CONFLICT (name, idempotency_key) DO NOTHING
+            "#,
+        )
+        .bind(&job.id)
+        .bind(&job.name)
+        .bind(&job.args)
+        .bind(&options_json)
+        .bind(job.status.as_str())
+        .bind(job.attempt)
+        .bind(job.created_at.timestamp())
+        .bind(job.scheduled_at.timestamp())
+        .bind(schedule_run_id) // Use schedule_run_id as idempotency key
+        .bind(schedule_id)
+        .bind(schedule_run_id)
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::from)?;
+
+        let was_deduplicated = result.rows_affected() == 0;
+
+        if was_deduplicated {
+            // Job already existed, fetch it
+            if let Some(existing) = self
+                .get_job_by_idempotency_key(&job.name, schedule_run_id)
+                .await?
+            {
+                return Ok((existing, true));
+            }
+        }
+
+        debug!(
+            "Inserted scheduled job: {} ({}) for schedule {}",
+            job.id, job.name, schedule_id
+        );
+        Ok((job, was_deduplicated))
+    }
 }
 
 fn row_to_job(row: &sqlx::postgres::PgRow) -> Result<InternalJob> {
@@ -885,5 +1290,28 @@ fn row_to_job(row: &sqlx::postgres::PgRow) -> Result<InternalJob> {
         result: row.get("result"),
         worker_id: row.get("worker_id"),
         idempotency_key: row.get("idempotency_key"),
+    })
+}
+
+fn row_to_schedule(row: &sqlx::postgres::PgRow) -> Result<Schedule> {
+    let options_str: String = row.get("handler_options");
+    let handler_options: JobOptions = serde_json::from_str(&options_str)?;
+
+    let status_str: String = row.get("status");
+    let status = ScheduleStatus::from_str(&status_str).unwrap_or(ScheduleStatus::Active);
+
+    Ok(Schedule {
+        id: row.get("id"),
+        name: row.get("name"),
+        cron_expression: row.get("cron_expression"),
+        timezone: row.get("timezone"),
+        handler_options,
+        status,
+        next_run_at: timestamp_to_datetime(row.get("next_run_at")),
+        last_run_at: row
+            .get::<Option<i64>, _>("last_run_at")
+            .map(timestamp_to_datetime),
+        created_at: timestamp_to_datetime(row.get("created_at")),
+        updated_at: timestamp_to_datetime(row.get("updated_at")),
     })
 }

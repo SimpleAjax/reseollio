@@ -111,3 +111,95 @@ export async function retryJob(id: string): Promise<{ success: boolean; message:
 
     return response.json();
 }
+
+// ==================== SCHEDULE TYPES ====================
+
+export type ScheduleStatus = "ACTIVE" | "PAUSED" | "DELETED";
+
+export interface Schedule {
+    id: string;
+    name: string;
+    handlerName: string;
+    cron: string;
+    timezone: string;
+    status: ScheduleStatus;
+    totalRuns: number;
+    createdAt: number; // Unix ms
+    nextRunAt: number | null;
+    lastRunAt: number | null;
+}
+
+export interface SchedulesResponse {
+    schedules: Schedule[];
+    total: number;
+    limit: number;
+    offset: number;
+}
+
+export interface SchedulesParams {
+    status?: ScheduleStatus | "ALL";
+    handlerName?: string;
+    limit?: number;
+    offset?: number;
+}
+
+// ==================== SCHEDULE API FUNCTIONS ====================
+
+export async function fetchSchedules(params: SchedulesParams = {}): Promise<SchedulesResponse> {
+    const searchParams = new URLSearchParams();
+
+    if (params.status && params.status !== "ALL") {
+        searchParams.set("status", params.status);
+    }
+    if (params.handlerName) {
+        searchParams.set("handlerName", params.handlerName);
+    }
+    if (params.limit) {
+        searchParams.set("limit", params.limit.toString());
+    }
+    if (params.offset) {
+        searchParams.set("offset", params.offset.toString());
+    }
+
+    const response = await fetch(`${API_BASE}/schedules?${searchParams.toString()}`);
+
+    if (!response.ok) {
+        throw new Error(`Failed to fetch schedules: ${response.statusText}`);
+    }
+
+    return response.json();
+}
+
+export async function fetchSchedule(id: string): Promise<Schedule> {
+    const response = await fetch(`${API_BASE}/schedules/${id}`);
+
+    if (!response.ok) {
+        throw new Error(`Failed to fetch schedule: ${response.statusText}`);
+    }
+
+    return response.json();
+}
+
+export async function pauseSchedule(id: string): Promise<{ success: boolean; schedule?: Schedule }> {
+    const response = await fetch(`${API_BASE}/schedules/${id}/pause`, {
+        method: "POST",
+    });
+
+    return response.json();
+}
+
+export async function resumeSchedule(id: string): Promise<{ success: boolean; schedule?: Schedule }> {
+    const response = await fetch(`${API_BASE}/schedules/${id}/resume`, {
+        method: "POST",
+    });
+
+    return response.json();
+}
+
+export async function deleteSchedule(id: string): Promise<{ success: boolean; message: string }> {
+    const response = await fetch(`${API_BASE}/schedules/${id}`, {
+        method: "DELETE",
+    });
+
+    return response.json();
+}

@@ -707,6 +707,239 @@ impl<S: Storage> Reseolio for ReseolioServer<S> {
         let out_stream = ReceiverStream::new(rx);
         Ok(Response::new(Box::pin(out_stream.map(Ok))))
     }
+
+    // === Schedule RPC Handlers ===
+
+    async fn create_schedule(
+        &self,
+        request: Request<CreateScheduleRequest>,
+    ) -> Result<Response<proto::Schedule>, Status> {
+        let req = request.into_inner();
+        debug!(
+            "[CREATE_SCHEDULE] name={}, cron={}",
+            req.name, req.cron_expression
+        );
+
+        let handler_options = req
+            .handler_options
+            .map(proto_job_options_to_internal)
+            .unwrap_or_default();
+
+        let new_schedule = crate::storage::NewSchedule {
+            name: req.name,
+            cron_expression: req.cron_expression,
+            timezone: if req.timezone.is_empty() {
+                None
+            } else {
+                Some(req.timezone)
+            },
+            handler_options: Some(handler_options),
+        };
+
+        let schedule = self
+            .storage
+            .create_schedule(new_schedule)
+            .await
+            .map_err(to_status)?;
+
+        info!(
+            "[CREATE_SCHEDULE] Created schedule: {} ({})",
+            schedule.id, schedule.name
+        );
+        Ok(Response::new(schedule_to_proto(&schedule)))
+    }
+
+    async fn get_schedule(
+        &self,
+        request: Request<GetScheduleRequest>,
+    ) -> Result<Response<proto::Schedule>, Status> {
+        let schedule_id = request.into_inner().schedule_id;
+        debug!("[GET_SCHEDULE] schedule_id={}", schedule_id);
+
+        // Try by ID first, then by name
+        let schedule = self
+            .storage
+            .get_schedule(&schedule_id)
+            .await
+            .map_err(to_status)?;
+
+        let schedule = match schedule {
+            Some(s) => s,
+            None => {
+                // Try by name
+                self.storage
+                    .get_schedule_by_name(&schedule_id)
+                    .await
+                    .map_err(to_status)?
+                    .ok_or_else(|| {
+                        Status::not_found(format!("Schedule not found: {}", schedule_id))
+                    })?
+            }
+        };
+
+        Ok(Response::new(schedule_to_proto(&schedule)))
+    }
+
+    async fn list_schedules(
+        &self,
+        request: Request<ListSchedulesRequest>,
+    ) -> Result<Response<ListSchedulesResponse>, Status> {
+        let req = request.into_inner();
+        debug!("[LIST_SCHEDULES] status_filter={}", req.status_filter);
+
+        let status = match req.status_filter.as_str() {
+            "active" => Some(crate::storage::ScheduleStatus::Active),
+            "paused" => Some(crate::storage::ScheduleStatus::Paused),
+            _ => None, // "all" or empty - show all except deleted
+        };
+
+        let filter = crate::storage::ScheduleFilter {
+            status,
+            limit: if req.limit > 0 { Some(req.limit) } else { None },
+            offset: if req.offset > 0 {
+                Some(req.offset)
+            } else {
+                None
+            },
+        };
+
+        let (schedules, total) = self
+            .storage
+            .list_schedules(filter)
+            .await
+            .map_err(to_status)?;
+
+        Ok(Response::new(ListSchedulesResponse {
+            schedules: schedules.iter().map(schedule_to_proto).collect(),
+            total,
+        }))
+    }
+
+    async fn update_schedule(
+        &self,
+        request: Request<UpdateScheduleRequest>,
+    ) -> Result<Response<proto::Schedule>, Status> {
+        let req = request.into_inner();
+        debug!("[UPDATE_SCHEDULE] schedule_id={}", req.schedule_id);
+
+        let cron_expression = if req.cron_expression.is_empty() {
+            None
+        } else {
+            Some(req.cron_expression.as_str())
+        };
+
+        let timezone = if req.timezone.is_empty() {
+            None
+        } else {
+            Some(req.timezone.as_str())
+        };
+
+        let handler_options = req.handler_options.map(proto_job_options_to_internal);
+
+        let schedule = self
+            .storage
+            .update_schedule(
+                &req.schedule_id,
+                cron_expression,
+                timezone,
+                handler_options.as_ref(),
+            )
+            .await
+            .map_err(to_status)?
+            .ok_or_else(|| Status::not_found(format!("Schedule not found: {}", req.schedule_id)))?;
+
+        info!("[UPDATE_SCHEDULE] Updated schedule: {}", schedule.id);
+        Ok(Response::new(schedule_to_proto(&schedule)))
+    }
+
+    async fn pause_schedule(
+        &self,
+        request: Request<PauseScheduleRequest>,
+    ) -> Result<Response<proto::Schedule>, Status> {
+        let schedule_id = request.into_inner().schedule_id;
+        debug!("[PAUSE_SCHEDULE] schedule_id={}", schedule_id);
+
+        let paused = self
+            .storage
+            .pause_schedule(&schedule_id)
+            .await
+            .map_err(to_status)?;
+
+        if !paused {
+            return Err(Status::failed_precondition(format!(
+                "Schedule {} could not be paused (not active)",
+                schedule_id
+            )));
+        }
+
+        let schedule = self
+            .storage
+            .get_schedule(&schedule_id)
+            .await
+            .map_err(to_status)?
+            .ok_or_else(|| Status::not_found(format!("Schedule not found: {}", schedule_id)))?;
+
+        info!("[PAUSE_SCHEDULE] Paused schedule: {}", schedule_id);
+        Ok(Response::new(schedule_to_proto(&schedule)))
+    }
+
+    async fn resume_schedule(
+        &self,
+        request: Request<ResumeScheduleRequest>,
+    ) -> Result<Response<proto::Schedule>, Status> {
+        let schedule_id = request.into_inner().schedule_id;
+        debug!("[RESUME_SCHEDULE] schedule_id={}", schedule_id);
+
+        let resumed = self
+            .storage
+            .resume_schedule(&schedule_id)
+            .await
+            .map_err(to_status)?;
+
+        if !resumed {
+            return Err(Status::failed_precondition(format!(
+                "Schedule {} could not be resumed (not paused)",
+                schedule_id
+            )));
+        }
+
+        let schedule = self
+            .storage
+            .get_schedule(&schedule_id)
+            .await
+            .map_err(to_status)?
+            .ok_or_else(|| Status::not_found(format!("Schedule not found: {}", schedule_id)))?;
+
+        info!("[RESUME_SCHEDULE] Resumed schedule: {}", schedule_id);
+        Ok(Response::new(schedule_to_proto(&schedule)))
+    }
+
+    async fn delete_schedule(
+        &self,
+        request: Request<DeleteScheduleRequest>,
+    ) -> Result<Response<DeleteScheduleResponse>, Status> {
+        let schedule_id = request.into_inner().schedule_id;
+        debug!("[DELETE_SCHEDULE] schedule_id={}", schedule_id);
+
+        let deleted = self
+            .storage
+            .delete_schedule(&schedule_id)
+            .await
+            .map_err(to_status)?;
+
+        info!(
+            "[DELETE_SCHEDULE] Deleted schedule: {} (success={})",
+            schedule_id, deleted
+        );
+        Ok(Response::new(DeleteScheduleResponse {
+            success: deleted,
+            message: if deleted {
+                "Schedule deleted".to_string()
+            } else {
+                "Schedule not found or already deleted".to_string()
+            },
+        }))
+    }
 }
 
 fn to_status(e: ReseolioError) -> Status {
@@ -760,5 +993,81 @@ fn proto_to_status(status: i32) -> Option<JobStatus> {
         5 => Some(JobStatus::Dead),
         6 => Some(JobStatus::Cancelled),
         _ => None,
+    }
+}
+
+/// Convert proto JobOptions to internal JobOptions
+fn proto_job_options_to_internal(o: proto::JobOptions) -> JobOptions {
+    JobOptions {
+        max_attempts: if o.max_attempts > 0 {
+            o.max_attempts
+        } else {
+            3
+        },
+        backoff: match o.backoff.as_str() {
+            "fixed" => crate::storage::BackoffStrategy::Fixed,
+            "linear" => crate::storage::BackoffStrategy::Linear,
+            _ => crate::storage::BackoffStrategy::Exponential,
+        },
+        initial_delay_ms: if o.initial_delay_ms > 0 {
+            o.initial_delay_ms
+        } else {
+            1000
+        },
+        max_delay_ms: if o.max_delay_ms > 0 {
+            o.max_delay_ms
+        } else {
+            60000
+        },
+        timeout_ms: if o.timeout_ms > 0 {
+            o.timeout_ms
+        } else {
+            30000
+        },
+        jitter: if o.jitter > 0.0 { o.jitter } else { 0.1 },
+    }
+}
+
+/// Convert internal JobOptions to proto JobOptions
+fn job_options_to_proto(opts: &JobOptions) -> proto::JobOptions {
+    proto::JobOptions {
+        max_attempts: opts.max_attempts,
+        backoff: match opts.backoff {
+            crate::storage::BackoffStrategy::Fixed => "fixed".to_string(),
+            crate::storage::BackoffStrategy::Linear => "linear".to_string(),
+            crate::storage::BackoffStrategy::Exponential => "exponential".to_string(),
+        },
+        initial_delay_ms: opts.initial_delay_ms,
+        max_delay_ms: opts.max_delay_ms,
+        timeout_ms: opts.timeout_ms,
+        jitter: opts.jitter,
+    }
+}
+
+/// Convert internal Schedule to proto Schedule
+fn schedule_to_proto(schedule: &crate::storage::Schedule) -> proto::Schedule {
+    proto::Schedule {
+        id: schedule.id.clone(),
+        name: schedule.name.clone(),
+        cron_expression: schedule.cron_expression.clone(),
+        timezone: schedule.timezone.clone(),
+        status: schedule_status_to_proto(schedule.status) as i32,
+        next_run_at: schedule.next_run_at.timestamp_millis(),
+        last_run_at: schedule
+            .last_run_at
+            .map(|t| t.timestamp_millis())
+            .unwrap_or(0),
+        created_at: schedule.created_at.timestamp_millis(),
+        updated_at: schedule.updated_at.timestamp_millis(),
+        handler_options: Some(job_options_to_proto(&schedule.handler_options)),
+    }
+}
+
+/// Convert internal ScheduleStatus to proto ScheduleStatus
+fn schedule_status_to_proto(status: crate::storage::ScheduleStatus) -> proto::ScheduleStatus {
+    match status {
+        crate::storage::ScheduleStatus::Active => proto::ScheduleStatus::Active,
+        crate::storage::ScheduleStatus::Paused => proto::ScheduleStatus::Paused,
+        crate::storage::ScheduleStatus::Deleted => proto::ScheduleStatus::Deleted,
     }
 }

@@ -10,8 +10,9 @@ import * as protoLoader from '@grpc/proto-loader';
 import { EventEmitter } from 'node:events';
 import { v4 as uuidv4 } from 'uuid';
 import { JobHandle } from './job';
+import { ScheduleHandle, protoToSchedule } from './schedule';
 import { DurableFunction, DurableOptions } from './durable';
-import type { Job, JobOptions, DurableHandler, EnqueueResult } from './types';
+import type { Job, JobOptions, DurableHandler, EnqueueResult, Schedule, ScheduleOptions } from './types';
 import { initTracing } from './tracing';
 
 export interface ReseolioConfig {
@@ -363,6 +364,223 @@ export class Reseolio extends EventEmitter {
                 }
             });
         });
+    }
+
+    // === Schedule Methods ===
+
+    /**
+     * Create a cron schedule for a durable function
+     * 
+     * @example
+     * // Run every day at 8 AM
+     * const schedule = await reseolio.schedule(
+     *     'reports:daily-summary',
+     *     { cron: '0 8 * * *', timezone: 'America/New_York' }
+     * );
+     */
+    async schedule(
+        name: string,
+        options: ScheduleOptions
+    ): Promise<ScheduleHandle> {
+        if (!this.connected) {
+            throw new Error('Reseolio client is not connected');
+        }
+
+        const request = {
+            name,
+            cronExpression: options.cron,
+            timezone: options.timezone ?? 'UTC',
+            handlerOptions: options.handlerOptions ? {
+                maxAttempts: options.handlerOptions.maxAttempts ?? 0,
+                backoff: options.handlerOptions.backoff ?? '',
+                initialDelayMs: options.handlerOptions.initialDelayMs ?? 0,
+                maxDelayMs: options.handlerOptions.maxDelayMs ?? 0,
+                timeoutMs: options.handlerOptions.timeoutMs ?? 0,
+                jitter: options.handlerOptions.jitter ?? 0,
+            } : undefined,
+        };
+
+        return new Promise((resolve, reject) => {
+            this.grpcClient.CreateSchedule(request, (err: Error | null, response: any) => {
+                if (err) {
+                    reject(err);
+                } else {
+                    const schedule = protoToSchedule(response);
+                    resolve(new ScheduleHandle(schedule.id, schedule.name, this));
+                }
+            });
+        });
+    }
+
+    /**
+     * Get a schedule by ID or name
+     */
+    async getSchedule(scheduleIdOrName: string): Promise<Schedule> {
+        if (!this.connected) {
+            throw new Error('Reseolio client is not connected');
+        }
+
+        return new Promise((resolve, reject) => {
+            this.grpcClient.GetSchedule({ scheduleId: scheduleIdOrName }, (err: Error | null, response: any) => {
+                if (err) {
+                    reject(err);
+                } else {
+                    resolve(protoToSchedule(response));
+                }
+            });
+        });
+    }
+
+    /**
+     * List all schedules
+     */
+    async listSchedules(filter?: { status?: 'active' | 'paused' | 'all'; limit?: number; offset?: number }): Promise<{ schedules: Schedule[]; total: number }> {
+        if (!this.connected) {
+            throw new Error('Reseolio client is not connected');
+        }
+
+        const request = {
+            statusFilter: filter?.status ?? '',
+            limit: filter?.limit ?? 100,
+            offset: filter?.offset ?? 0,
+        };
+
+        return new Promise((resolve, reject) => {
+            this.grpcClient.ListSchedules(request, (err: Error | null, response: any) => {
+                if (err) {
+                    reject(err);
+                } else {
+                    resolve({
+                        schedules: (response.schedules || []).map((s: any) => protoToSchedule(s)),
+                        total: response.total,
+                    });
+                }
+            });
+        });
+    }
+
+    /**
+     * Update a schedule's cron expression, timezone, or options
+     */
+    async updateSchedule(
+        scheduleId: string,
+        options: { cron?: string; timezone?: string; handlerOptions?: JobOptions }
+    ): Promise<Schedule> {
+        if (!this.connected) {
+            throw new Error('Reseolio client is not connected');
+        }
+
+        const request = {
+            scheduleId,
+            cronExpression: options.cron ?? '',
+            timezone: options.timezone ?? '',
+            handlerOptions: options.handlerOptions ? {
+                maxAttempts: options.handlerOptions.maxAttempts ?? 0,
+                backoff: options.handlerOptions.backoff ?? '',
+                initialDelayMs: options.handlerOptions.initialDelayMs ?? 0,
+                maxDelayMs: options.handlerOptions.maxDelayMs ?? 0,
+                timeoutMs: options.handlerOptions.timeoutMs ?? 0,
+                jitter: options.handlerOptions.jitter ?? 0,
+            } : undefined,
+        };
+
+        return new Promise((resolve, reject) => {
+            this.grpcClient.UpdateSchedule(request, (err: Error | null, response: any) => {
+                if (err) {
+                    reject(err);
+                } else {
+                    resolve(protoToSchedule(response));
+                }
+            });
+        });
+    }
+
+    /**
+     * Pause a schedule (stops triggering)
+     */
+    async pauseSchedule(scheduleId: string): Promise<Schedule> {
+        if (!this.connected) {
+            throw new Error('Reseolio client is not connected');
+        }
+
+        return new Promise((resolve, reject) => {
+            this.grpcClient.PauseSchedule({ scheduleId }, (err: Error | null, response: any) => {
+                if (err) {
+                    reject(err);
+                } else {
+                    resolve(protoToSchedule(response));
+                }
+            });
+        });
+    }
+
+    /**
+     * Resume a paused schedule
+     */
+    async resumeSchedule(scheduleId: string): Promise<Schedule> {
+        if (!this.connected) {
+            throw new Error('Reseolio client is not connected');
+        }
+
+        return new Promise((resolve, reject) => {
+            this.grpcClient.ResumeSchedule({ scheduleId }, (err: Error | null, response: any) => {
+                if (err) {
+                    reject(err);
+                } else {
+                    resolve(protoToSchedule(response));
+                }
+            });
+        });
+    }
+
+    /**
+     * Delete a schedule (soft delete)
+     */
+    async deleteSchedule(scheduleId: string): Promise<boolean> {
+        if (!this.connected) {
+            throw new Error('Reseolio client is not connected');
+        }
+
+        return new Promise((resolve, reject) => {
+            this.grpcClient.DeleteSchedule({ scheduleId }, (err: Error | null, response: any) => {
+                if (err) {
+                    reject(err);
+                } else {
+                    resolve(response.success);
+                }
+            });
+        });
+    }
+
+    // === Convenience Schedule Methods ===
+
+    /**
+     * Create a schedule that runs every minute
+     */
+    async everyMinute(name: string, handlerOptions?: JobOptions): Promise<ScheduleHandle> {
+        return this.schedule(name, { cron: '* * * * *', handlerOptions });
+    }
+
+    /**
+     * Create a schedule that runs every hour at minute 0
+     */
+    async hourly(name: string, handlerOptions?: JobOptions): Promise<ScheduleHandle> {
+        return this.schedule(name, { cron: '0 * * * *', handlerOptions });
+    }
+
+    /**
+     * Create a schedule that runs daily at a specific hour (default: midnight)
+     */
+    async daily(name: string, hour: number = 0, handlerOptions?: JobOptions): Promise<ScheduleHandle> {
+        return this.schedule(name, { cron: `0 ${hour} * * *`, handlerOptions });
+    }
+
+    /**
+     * Create a schedule that runs weekly on a specific day and hour
+     * @param dayOfWeek 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+     */
+    async weekly(name: string, dayOfWeek: number = 0, hour: number = 0, handlerOptions?: JobOptions): Promise<ScheduleHandle> {
+        return this.schedule(name, { cron: `0 ${hour} * * ${dayOfWeek}`, handlerOptions });
     }
 
     // === Private Methods ===

@@ -22,6 +22,9 @@ const tests = [
     { file: '09-chained-durables.ts', name: 'Chained Durable Functions (Saga)' },
     { file: '10-fanout-parallel.ts', name: 'Fan-Out and Parallel Execution' },
     { file: '11-result-caching.ts', name: 'Result Caching' },
+    { file: '12-schedule-lifecycle.ts', name: 'Cron Schedule Lifecycle' },
+    { file: '13-schedule-triggering.ts', name: 'Schedule Triggering' },
+    { file: '14-schedule-edge-cases.ts', name: 'Schedule Edge Cases' },
 ];
 
 interface TestResult {

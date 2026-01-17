@@ -127,19 +127,29 @@ async fn run_with_storage<S: Storage>(
     // Create shared components for push-based architecture
     let registry = WorkerRegistry::new();
     let scheduler_notify = Arc::new(Notify::new());
+    let cron_shutdown_notify = Arc::new(Notify::new());
 
-    // Start the push-based scheduler
-    let scheduler =
+    // Start the push-based job scheduler
+    let job_scheduler =
         scheduler::Scheduler::new(storage.clone(), registry.clone(), scheduler_notify.clone())
             .with_poll_interval(tokio::time::Duration::from_millis(config.poll_interval_ms))
             .with_batch_size(config.batch_size);
 
-    let scheduler_handle = tokio::spawn(async move { scheduler.run().await });
+    let job_scheduler_handle = tokio::spawn(async move { job_scheduler.run().await });
 
     info!(
         "Push-based scheduler started (poll={}ms, batch={})",
         config.poll_interval_ms, config.batch_size
     );
+
+    // Start the cron scheduler for recurring schedules
+    let cron_scheduler =
+        scheduler::CronScheduler::new(storage.clone(), cron_shutdown_notify.clone())
+            .with_poll_interval(tokio::time::Duration::from_secs(1)); // Check every second
+
+    let cron_scheduler_handle = tokio::spawn(async move { cron_scheduler.run().await });
+
+    info!("Cron scheduler started (poll=1s)");
 
     // Start gRPC server
     let addr: SocketAddr = config.listen_addr.parse()?;
@@ -147,7 +157,9 @@ async fn run_with_storage<S: Storage>(
 
     server::serve(storage, registry, scheduler_notify, addr).await?;
 
-    scheduler_handle.abort();
+    // Graceful shutdown
+    job_scheduler_handle.abort();
+    cron_scheduler_handle.abort();
     info!("Reseolio Core shutdown complete");
 
     Ok(())

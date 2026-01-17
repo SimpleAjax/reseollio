@@ -94,6 +94,39 @@ Tests timeout and deadline behavior:
 - Custom timeout configuration
 - Concurrent jobs with different durations
 
+### 12 - Cron Schedule Lifecycle
+Tests core schedule management operations:
+- Creating schedules with cron expressions
+- Getting schedule details by ID
+- Pausing and resuming schedules
+- Updating cron expressions and timezones
+- Deleting schedules (soft delete)
+- Listing schedules with filters
+- ScheduleHandle methods (status, nextRunAt, lastRunAt)
+- Convenience methods (everyMinute, hourly, daily, weekly)
+
+### 13 - Schedule Triggering
+Tests that schedules actually create jobs:
+- Schedule with short interval triggers correctly
+- Verifies jobs are created by the cron scheduler
+- Paused schedules don't trigger
+- Resume enables triggering again
+- Multiple concurrent schedules
+- Schedule with custom handler options
+
+### 14 - Schedule Edge Cases
+Tests error handling and boundary conditions:
+- Invalid cron expression rejection
+- Malformed cron (wrong field count)
+- Invalid timezone handling
+- Various valid cron expressions
+- Various valid timezones (IANA)
+- Operations on deleted schedules
+- Special characters in schedule names
+- Get non-existent schedule
+- Double pause/resume operations
+- Boundary cron values
+
 ## Writing New Tests
 
 Follow this pattern for new E2E tests:

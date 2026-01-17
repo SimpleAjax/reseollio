@@ -216,3 +216,179 @@ export async function getStats(): Promise<Stats> {
         successRate: Math.round(successRate * 10) / 10,
     };
 }
+
+// ==================== SCHEDULE TYPES ====================
+
+// Schedule Status enum
+export enum ScheduleStatus {
+    UNSPECIFIED = 0,
+    ACTIVE = 1,
+    PAUSED = 2,
+    DELETED = 3,
+}
+
+// Map proto schedule status to string
+export function scheduleStatusToString(status: number | string): string {
+    if (typeof status === "string") {
+        if (status.includes("ACTIVE")) return "ACTIVE";
+        if (status.includes("PAUSED")) return "PAUSED";
+        if (status.includes("DELETED")) return "DELETED";
+        return "ACTIVE";
+    }
+
+    switch (status) {
+        case 1: return "ACTIVE";
+        case 2: return "PAUSED";
+        case 3: return "DELETED";
+        default: return "ACTIVE";
+    }
+}
+
+// Map string status to proto number
+export function stringToScheduleStatus(status: string): number {
+    switch (status.toUpperCase()) {
+        case "ACTIVE": return 1;
+        case "PAUSED": return 2;
+        case "DELETED": return 3;
+        default: return 0;
+    }
+}
+
+export interface Schedule {
+    id: string;
+    name: string;
+    handler_name: string;
+    cron: string;
+    timezone: string;
+    status: number | string;
+    args: Buffer;
+    total_runs: string | number;
+    created_at: string;
+    next_run_at: string;
+    last_run_at: string;
+}
+
+export interface ListSchedulesRequest {
+    statuses?: number[];
+    handler_names?: string[];
+    limit?: number;
+    offset?: number;
+}
+
+export interface ListSchedulesResponse {
+    schedules: Schedule[];
+    total: number;
+}
+
+export interface CreateScheduleRequest {
+    name: string;
+    handler_name: string;
+    cron: string;
+    timezone?: string;
+    args?: Buffer;
+}
+
+export interface UpdateScheduleRequest {
+    schedule_id: string;
+    cron?: string;
+    timezone?: string;
+    args?: Buffer;
+}
+
+export interface DeleteScheduleResponse {
+    success: boolean;
+    message: string;
+}
+
+// ==================== SCHEDULE gRPC METHODS ====================
+
+export function listSchedules(request: ListSchedulesRequest): Promise<ListSchedulesResponse> {
+    return new Promise((resolve, reject) => {
+        getClient().ListSchedules(request, (error: any, response: ListSchedulesResponse) => {
+            if (error) {
+                console.error("[gRPC] ListSchedules error:", error);
+                reject(error);
+            } else {
+                resolve(response);
+            }
+        });
+    });
+}
+
+export function getSchedule(scheduleId: string): Promise<Schedule> {
+    return new Promise((resolve, reject) => {
+        getClient().GetSchedule({ schedule_id: scheduleId }, (error: any, response: Schedule) => {
+            if (error) {
+                console.error("[gRPC] GetSchedule error:", error);
+                reject(error);
+            } else {
+                resolve(response);
+            }
+        });
+    });
+}
+
+export function createSchedule(request: CreateScheduleRequest): Promise<Schedule> {
+    return new Promise((resolve, reject) => {
+        getClient().CreateSchedule(request, (error: any, response: Schedule) => {
+            if (error) {
+                console.error("[gRPC] CreateSchedule error:", error);
+                reject(error);
+            } else {
+                resolve(response);
+            }
+        });
+    });
+}
+
+export function updateSchedule(request: UpdateScheduleRequest): Promise<Schedule> {
+    return new Promise((resolve, reject) => {
+        getClient().UpdateSchedule(request, (error: any, response: Schedule) => {
+            if (error) {
+                console.error("[gRPC] UpdateSchedule error:", error);
+                reject(error);
+            } else {
+                resolve(response);
+            }
+        });
+    });
+}
+
+export function pauseSchedule(scheduleId: string): Promise<Schedule> {
+    return new Promise((resolve, reject) => {
+        getClient().PauseSchedule({ schedule_id: scheduleId }, (error: any, response: Schedule) => {
+            if (error) {
+                console.error("[gRPC] PauseSchedule error:", error);
+                reject(error);
+            } else {
+                resolve(response);
+            }
+        });
+    });
+}
+
+export function resumeSchedule(scheduleId: string): Promise<Schedule> {
+    return new Promise((resolve, reject) => {
+        getClient().ResumeSchedule({ schedule_id: scheduleId }, (error: any, response: Schedule) => {
+            if (error) {
+                console.error("[gRPC] ResumeSchedule error:", error);
+                reject(error);
+            } else {
+                resolve(response);
+            }
+        });
+    });
+}
+
+export function deleteSchedule(scheduleId: string): Promise<DeleteScheduleResponse> {
+    return new Promise((resolve, reject) => {
+        getClient().DeleteSchedule({ schedule_id: scheduleId }, (error: any, response: DeleteScheduleResponse) => {
+            if (error) {
+                console.error("[gRPC] DeleteSchedule error:", error);
+                reject(error);
+            } else {
+                resolve(response);
+            }
+        });
+    });
+}
