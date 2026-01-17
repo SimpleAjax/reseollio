@@ -1,4 +1,4 @@
-export type JobStatus = "PENDING" | "RUNNING" | "SUCCESS" | "FAILED" | "DEAD";
+export type JobStatus = "PENDING" | "RUNNING" | "SUCCESS" | "DEAD" | "CANCELLED";
 
 export interface Job {
     id: string;
@@ -20,8 +20,8 @@ export interface Stats {
     pendingCount: number;
     runningCount: number;
     successCount: number;
-    failedCount: number;
     deadCount: number;
+    cancelledCount: number;
     successRate: number;
     avgDuration: number;
 }
@@ -87,14 +87,14 @@ export const dummyJobs: Job[] = [
     {
         id: "job_6u7v8w9x",
         name: "data:sync:users",
-        status: "FAILED",
+        status: "CANCELLED",
         attempt: 2,
         maxAttempts: 3,
         createdAt: new Date(Date.now() - 10 * 60 * 1000),
         scheduledAt: new Date(Date.now() - 5 * 60 * 1000),
         startedAt: new Date(Date.now() - 4 * 60 * 1000),
         completedAt: new Date(Date.now() - 3.5 * 60 * 1000),
-        error: "Database connection refused",
+        error: "Cancelled by user",
     },
     {
         id: "job_7y8z9a0b",
@@ -146,8 +146,8 @@ export const dummyStats: Stats = {
     pendingCount: 12,
     runningCount: 3,
     successCount: 1195,
-    failedCount: 32,
     deadCount: 5,
+    cancelledCount: 32,
     successRate: 95.8,
     avgDuration: 842,
 };

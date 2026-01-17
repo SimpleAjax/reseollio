@@ -22,8 +22,8 @@ export interface Stats {
     pendingCount: number;
     runningCount: number;
     successCount: number;
-    failedCount: number;
     deadCount: number;
+    cancelledCount: number;
     successRate: number;
 }
 

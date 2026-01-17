@@ -434,8 +434,8 @@ export default function DashboardPage() {
                     <TabsTrigger value="SUCCESS">
                       Success <span className="ml-2 text-xs opacity-60">({stats?.successCount || 0})</span>
                     </TabsTrigger>
-                    <TabsTrigger value="FAILED">
-                      Failed <span className="ml-2 text-xs opacity-60">({stats?.failedCount || 0})</span>
+                    <TabsTrigger value="CANCELLED">
+                      Cancelled <span className="ml-2 text-xs opacity-60">({stats?.cancelledCount || 0})</span>
                     </TabsTrigger>
                     <TabsTrigger value="DEAD">
                       Dead <span className="ml-2 text-xs opacity-60">({stats?.deadCount || 0})</span>

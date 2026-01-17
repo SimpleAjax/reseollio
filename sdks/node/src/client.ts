@@ -580,7 +580,11 @@ export class Reseolio extends EventEmitter {
      * @param dayOfWeek 0 = Sunday, 1 = Monday, ..., 6 = Saturday
      */
     async weekly(name: string, dayOfWeek: number = 0, hour: number = 0, handlerOptions?: JobOptions): Promise<ScheduleHandle> {
-        return this.schedule(name, { cron: `0 ${hour} * * ${dayOfWeek}`, handlerOptions });
+        // The cron crate uses 1-7 for days (1=Monday, 7=Sunday) or SUN, MON, etc.
+        // JavaScript uses 0-6 (0=Sunday), so we need to convert:
+        // JS 0 (Sunday) -> cron 7 (Sunday)
+        const cronDay = dayOfWeek === 0 ? 7 : dayOfWeek;
+        return this.schedule(name, { cron: `0 ${hour} * * ${cronDay}`, handlerOptions });
     }
 
     // === Private Methods ===

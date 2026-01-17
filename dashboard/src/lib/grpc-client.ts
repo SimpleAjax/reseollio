@@ -187,23 +187,23 @@ export interface Stats {
     pendingCount: number;
     runningCount: number;
     successCount: number;
-    failedCount: number;
     deadCount: number;
+    cancelledCount: number;
     successRate: number;
 }
 
 export async function getStats(): Promise<Stats> {
     // Fetch counts for each status
-    const [pending, running, success, failed, dead] = await Promise.all([
+    const [pending, running, success, dead, cancelled] = await Promise.all([
         listJobs({ statuses: [JobStatus.PENDING], limit: 1 }),
         listJobs({ statuses: [JobStatus.RUNNING], limit: 1 }),
         listJobs({ statuses: [JobStatus.SUCCESS], limit: 1 }),
-        listJobs({ statuses: [JobStatus.FAILED], limit: 1 }),
         listJobs({ statuses: [JobStatus.DEAD], limit: 1 }),
+        listJobs({ statuses: [JobStatus.CANCELLED], limit: 1 }),
     ]);
 
-    const totalJobs = pending.total + running.total + success.total + failed.total + dead.total;
-    const completedJobs = success.total + failed.total + dead.total;
+    const totalJobs = pending.total + running.total + success.total + dead.total + cancelled.total;
+    const completedJobs = success.total + dead.total + cancelled.total;
     const successRate = completedJobs > 0 ? (success.total / completedJobs) * 100 : 100;
 
     return {
@@ -211,8 +211,8 @@ export async function getStats(): Promise<Stats> {
         pendingCount: pending.total,
         runningCount: running.total,
         successCount: success.total,
-        failedCount: failed.total,
         deadCount: dead.total,
+        cancelledCount: cancelled.total,
         successRate: Math.round(successRate * 10) / 10,
     };
 }

@@ -100,10 +100,10 @@ async function runTests() {
 
         // Verify next run is at the top of an hour
         const hourlyNextRun = await hourlySchedule.nextRunAt();
-        console.log(`    Next run hour: ${hourlyNextRun.getUTCHours()}, minute: ${hourlyNextRun.getMinutes()}`);
+        console.log(`    Next run hour: ${hourlyNextRun.getUTCHours()}, minute: ${hourlyNextRun.getUTCMinutes()}`);
 
         logTest('Next run is at minute 0',
-            hourlyNextRun.getMinutes() === 0);
+            hourlyNextRun.getUTCMinutes() === 0);
 
         // ========== TEST 3: daily() ==========
         console.log('\nTest 3: daily() convenience method');
@@ -135,7 +135,7 @@ async function runTests() {
         console.log(`    Next run hour (UTC): ${daily8NextRun.getUTCHours()}`);
 
         logTest('Next run is at 8 AM UTC',
-            daily8NextRun.getUTCHours() === 8 && daily8NextRun.getMinutes() === 0);
+            daily8NextRun.getUTCHours() === 8 && daily8NextRun.getUTCMinutes() === 0);
 
         // ========== TEST 4: weekly() ==========
         console.log('\nTest 4: weekly() convenience method');
@@ -173,8 +173,8 @@ async function runTests() {
         logTest('Next run is at 17:00 UTC',
             weeklyFriNextRun.getUTCHours() === 17);
 
-        // ========== TEST 5: Sunday (day 0) ==========
-        console.log('\nTest 5: Weekly on Sunday (day 0)');
+        // ========== TEST 5: Sunday (day 0 in JS, day 7 in cron) ==========
+        console.log('\nTest 5: Weekly on Sunday (JS day 0 → cron day 7)');
         console.log('-'.repeat(40));
 
         reseolio.durable(`e2e:conv:weekly-sun-${runId}`, async () => ({ type: 'weekly-sun' }));
@@ -184,8 +184,9 @@ async function runTests() {
         const weeklySunDetails = await weeklySunSchedule.details();
         console.log(`    Sunday 10 AM - Cron: ${weeklySunDetails.cronExpression}`);
 
-        logTest('weekly(0, 10) uses cron (0 10 * * 0)',
-            weeklySunDetails.cronExpression === '0 10 * * 0');
+        // Sunday is day 0 in JS but day 7 in cron (cron uses 1-7 where 7=Sunday)
+        logTest('weekly(0, 10) uses cron (0 10 * * 7) for Sunday',
+            weeklySunDetails.cronExpression === '0 10 * * 7');
 
         const weeklySunNextRun = await weeklySunSchedule.nextRunAt();
         console.log(`    Day of week: ${weeklySunNextRun.getUTCDay()} (0 = Sunday)`);
