@@ -18,6 +18,11 @@ const tests = [
     { file: '05-long-running-jobs.ts', name: 'Long-Running Jobs' },
     { file: '06-burst-traffic.ts', name: 'Burst Traffic' },
     { file: '07-chained-workflows.ts', name: 'Chained Workflows' },
+    { file: '08-schedule-throughput.ts', name: 'Schedule Throughput' },
+    { file: '09-schedule-triggering.ts', name: 'Schedule Triggering' },
+    { file: '10-schedule-idempotency.ts', name: 'Schedule Idempotency' },
+    { file: '11-schedule-updates.ts', name: 'Schedule Updates' },
+    { file: '12-schedule-mixed-workload.ts', name: 'Schedule Mixed Workload' },
 ];
 
 interface TestResult {

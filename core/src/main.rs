@@ -143,19 +143,28 @@ async fn run_with_storage<S: Storage>(
     );
 
     // Start the cron scheduler for recurring schedules
+    // Using a 10-second poll interval - the gRPC service will pre-schedule
+    // any jobs that would run before the next poll to prevent missed executions
+    let schedule_poll_interval = tokio::time::Duration::from_secs(10);
+
     let cron_scheduler =
         scheduler::CronScheduler::new(storage.clone(), cron_shutdown_notify.clone())
-            .with_poll_interval(tokio::time::Duration::from_secs(1)); // Check every second
+            .with_poll_interval(schedule_poll_interval);
 
     let cron_scheduler_handle = tokio::spawn(async move { cron_scheduler.run().await });
 
-    info!("Cron scheduler started (poll=1s)");
+    info!(
+        "Cron scheduler started (poll={}s)",
+        schedule_poll_interval.as_secs()
+    );
 
     // Start gRPC server
     let addr: SocketAddr = config.listen_addr.parse()?;
     info!("gRPC server listening on {}", addr);
 
-    server::serve(storage, registry, scheduler_notify, addr).await?;
+    // Pass the schedule poll interval to the server for pre-scheduling optimization
+    let poll_interval_std = std::time::Duration::from_secs(schedule_poll_interval.as_secs());
+    server::serve(storage, registry, scheduler_notify, addr, poll_interval_std).await?;
 
     // Graceful shutdown
     job_scheduler_handle.abort();

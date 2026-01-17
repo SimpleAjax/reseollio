@@ -44,10 +44,11 @@ pub async fn serve<S: Storage>(
     registry: WorkerRegistry,
     scheduler_notify: Arc<Notify>,
     addr: SocketAddr,
+    schedule_poll_interval: std::time::Duration,
 ) -> Result<(), tonic::transport::Error> {
     info!("Starting gRPC server on {}", addr);
 
-    let server = ReseolioServer::new(storage, registry, scheduler_notify);
+    let server = ReseolioServer::new(storage, registry, scheduler_notify, schedule_poll_interval);
 
     // Middleware stack
     let layer = tower::ServiceBuilder::new()
