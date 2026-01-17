@@ -25,6 +25,11 @@ const tests = [
     { file: '12-schedule-lifecycle.ts', name: 'Cron Schedule Lifecycle' },
     { file: '13-schedule-triggering.ts', name: 'Schedule Triggering' },
     { file: '14-schedule-edge-cases.ts', name: 'Schedule Edge Cases' },
+    { file: '15-schedule-prescheduling.ts', name: 'Schedule Pre-Scheduling' },
+    { file: '16-schedule-timezone.ts', name: 'Schedule Timezone Support' },
+    { file: '17-schedule-convenience.ts', name: 'Schedule Convenience Methods' },
+    { file: '18-schedule-idempotency.ts', name: 'Schedule Idempotency' },
+    { file: '19-schedule-handler-options.ts', name: 'Schedule Handler Options' },
 ];
 
 interface TestResult {

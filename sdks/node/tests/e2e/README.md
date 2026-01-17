@@ -127,6 +127,51 @@ Tests error handling and boundary conditions:
 - Double pause/resume operations
 - Boundary cron values
 
+### 15 - Schedule Pre-Scheduling
+Tests the pre-scheduling optimization:
+- Schedules with every-minute cron expressions
+- Next run time calculations
+- Multiple rapid schedule creations
+- Schedule cron updates
+- Pause/resume timing preservation
+- List schedules with pagination
+
+### 16 - Schedule Timezone Support
+Tests timezone-aware scheduling:
+- UTC timezone storage and execution
+- America/New_York timezone (EST/EDT)
+- Asia/Tokyo timezone (JST)
+- Europe/London timezone (GMT/BST)
+- Timezone updates
+- Default timezone (UTC when not specified)
+- Same cron, different timezones
+
+### 17 - Schedule Convenience Methods
+Tests convenience methods for common patterns:
+- everyMinute() - runs every minute
+- hourly() - runs at the top of every hour
+- daily(hour) - runs at specific hour
+- weekly(day, hour) - runs on specific day/hour
+- Sunday (day 0) handling
+- All convenience schedules are active
+
+### 18 - Schedule Idempotency
+Tests duplicate handling and concurrent access:
+- Unique schedule name constraint
+- Multiple creates return same ID
+- Only one schedule per name in database
+- Update doesn't create duplicates
+- Pause/resume maintains single instance
+- Concurrent creates same name
+
+### 19 - Schedule Handler Options
+Tests handler options with schedules:
+- Schedule with retry configuration
+- Schedule with timeout configuration
+- Schedule with custom backoff strategy
+- Multiple schedules with different options
+- Handler options stored with schedule
+
 ## Writing New Tests
 
 Follow this pattern for new E2E tests:
