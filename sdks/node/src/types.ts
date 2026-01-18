@@ -89,6 +89,7 @@ export interface Schedule {
     createdAt: number;
     updatedAt: number;
     handlerOptions?: JobOptions;
+    args?: any[];
 }
 
 export interface ScheduleOptions {
@@ -98,6 +99,8 @@ export interface ScheduleOptions {
     timezone?: string;
     /** Options applied to triggered jobs */
     handlerOptions?: JobOptions;
+    /** Arguments passed to the job */
+    args?: any[];
 }
 
 /**

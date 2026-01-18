@@ -34,11 +34,14 @@ async function main() {
         await reseolio.start();
         const runId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
-        // Define handlers
+        // Define handlers (Pre-create them, though we could do it in loop)
+        const handlers: any[] = [];
         for (let i = 0; i < NUM_UNIQUE_SCHEDULES; i++) {
-            reseolio.durable(`loadtest:idem-schedule-${runId}-${i}`, async () => {
-                return { executed: true, schedule: i };
-            });
+            handlers.push(
+                reseolio.durable(`loadtest:idem-schedule-${runId}-${i}`, async () => {
+                    return { executed: true, schedule: i };
+                })
+            );
         }
 
         // ========== PHASE 1: Concurrent Schedule Creation ==========
@@ -52,18 +55,20 @@ async function main() {
             const scheduleName = `loadtest:idem-schedule-${runId}-${i}`;
 
             // Try to create the same schedule multiple times concurrently
+            const handler = handlers[i];
+
             for (let d = 0; d < DUPLICATE_ATTEMPTS; d++) {
                 creationPromises.push(
-                    reseolio.schedule(scheduleName, {
+                    handler.schedule({
                         cron: '0 * * * *', // Hourly
                         timezone: 'UTC',
-                    }).then(handle => {
+                    }).then((handle: any) => {
                         creationResults.push({
                             scheduleName,
                             scheduleId: handle.id,
                             success: true,
                         });
-                    }).catch(err => {
+                    }).catch((err: any) => {
                         // Some may fail due to duplicate detection
                         creationResults.push({
                             scheduleName,

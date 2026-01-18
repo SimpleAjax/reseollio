@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Prometheus Metrics for Reseolio
 //!
 //! This module provides production-grade observability through Prometheus metrics.

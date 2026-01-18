@@ -77,8 +77,9 @@ async function runTests() {
         });
 
         // Create a schedule that runs every minute
+        // Create a schedule that runs every minute
         const scheduleName = `e2e:schedule:trigger-test-${runId}`;
-        const scheduleHandle = await reseolio.schedule(scheduleName, {
+        const scheduleHandle = await triggerHandler.schedule({
             cron: '* * * * *', // Every minute
             timezone: 'UTC',
         });
@@ -126,8 +127,10 @@ async function runTests() {
         console.log('-'.repeat(40));
 
         // Create another schedule and immediately pause it
+        // Create another schedule and immediately pause it
         const pausedScheduleName = `e2e:schedule:paused-test-${runId}`;
-        const pausedSchedule = await reseolio.schedule(pausedScheduleName, {
+        const pausedHandler = reseolio.durable(pausedScheduleName, async () => ({}));
+        const pausedSchedule = await pausedHandler.schedule({
             cron: '* * * * *', // Every minute
             timezone: 'UTC',
         });
@@ -157,13 +160,18 @@ async function runTests() {
         console.log('\nTest 5: Multiple concurrent schedules');
         console.log('-'.repeat(40));
 
-        const schedule1 = await reseolio.schedule(`e2e:schedule:concurrent-1-${runId}`, {
+        const concurrentHandler1 = reseolio.durable(`e2e:schedule:concurrent-1-${runId}`, async () => ({}));
+        const schedule1 = await concurrentHandler1.schedule({
             cron: '*/5 * * * *', // Every 5 minutes
         });
-        const schedule2 = await reseolio.schedule(`e2e:schedule:concurrent-2-${runId}`, {
+
+        const concurrentHandler2 = reseolio.durable(`e2e:schedule:concurrent-2-${runId}`, async () => ({}));
+        const schedule2 = await concurrentHandler2.schedule({
             cron: '*/10 * * * *', // Every 10 minutes
         });
-        const schedule3 = await reseolio.schedule(`e2e:schedule:concurrent-3-${runId}`, {
+
+        const concurrentHandler3 = reseolio.durable(`e2e:schedule:concurrent-3-${runId}`, async () => ({}));
+        const schedule3 = await concurrentHandler3.schedule({
             cron: '0 * * * *', // Every hour
         });
 
@@ -185,7 +193,8 @@ async function runTests() {
         console.log('\nTest 6: Schedule with custom handler options');
         console.log('-'.repeat(40));
 
-        const optionsSchedule = await reseolio.schedule(`e2e:schedule:with-options-${runId}`, {
+        const optionsHandler = reseolio.durable(`e2e:schedule:with-options-${runId}`, async () => ({}));
+        const optionsSchedule = await optionsHandler.schedule({
             cron: '0 0 * * *', // Daily at midnight
             timezone: 'America/Los_Angeles',
             handlerOptions: {

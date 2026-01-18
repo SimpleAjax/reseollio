@@ -107,5 +107,6 @@ export function protoToSchedule(proto: any): Schedule {
             timeoutMs: proto.handlerOptions.timeoutMs,
             jitter: proto.handlerOptions.jitter,
         } : undefined,
+        args: (proto.args && proto.args.length > 0) ? JSON.parse(Buffer.from(proto.args).toString()) : [],
     };
 }

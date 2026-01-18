@@ -32,27 +32,32 @@ async function main() {
         return { backup: 'complete', timestamp: Date.now() };
     });
 
+    const deepCleanup = reseolio.durable('cleanup:deep', async () => {
+        console.log('🧹 Running deep cleanup...');
+        return { cleaned: true, timestamp: Date.now() };
+    });
+
     // Example 1: Run every minute
     console.log('📅 Setting up every-minute schedule...');
-    const everyMinuteSchedule = await reseolio.everyMinute('cleanup:temp-files');
+    const everyMinuteSchedule = await cleanupTemp.everyMinute();
     console.log(`  ✅ Created: ${everyMinuteSchedule.id}`);
     console.log(`  Next run: ${(await everyMinuteSchedule.nextRunAt()).toLocaleString()}\n`);
 
     // Example 2: Run every hour
     console.log('📅 Setting up hourly schedule...');
-    const hourlySchedule = await reseolio.hourly('metrics:hourly');
+    const hourlySchedule = await generateHourlyMetrics.hourly();
     console.log(`  ✅ Created: ${hourlySchedule.id}`);
     console.log(`  Next run: ${(await hourlySchedule.nextRunAt()).toLocaleString()}\n`);
 
     // Example 3: Run daily at 2 AM
     console.log('📅 Setting up daily schedule (2 AM)...');
-    const dailySchedule = await reseolio.daily('cleanup:temp-files', 2);
+    const dailySchedule = await deepCleanup.daily(2);
     console.log(`  ✅ Created: ${dailySchedule.id}`);
     console.log(`  Next run: ${(await dailySchedule.nextRunAt()).toLocaleString()}\n`);
 
     // Example 4: Run weekly on Monday at 3 AM
     console.log('📅 Setting up weekly schedule (Monday 3 AM)...');
-    const weeklySchedule = await reseolio.weekly('backup:database', 1, 3); // 1 = Monday
+    const weeklySchedule = await weeklyBackup.weekly(1, 3); // 1 = Monday
     console.log(`  ✅ Created: ${weeklySchedule.id}`);
     console.log(`  Next run: ${(await weeklySchedule.nextRunAt()).toLocaleString()}\n`);
 

@@ -53,7 +53,7 @@ async function runTests() {
         console.log('Test 1: Schedule with retry configuration');
         console.log('-'.repeat(40));
 
-        reseolio.durable(`e2e:opts:retry-${runId}`, async () => {
+        const retryHandler = reseolio.durable(`e2e:opts:retry-${runId}`, async () => {
             return { executed: true };
         }, {
             maxAttempts: 5,
@@ -61,7 +61,7 @@ async function runTests() {
             backoff: 'exponential',
         });
 
-        const retrySchedule = await reseolio.schedule(`e2e:opts:retry-${runId}`, {
+        const retrySchedule = await retryHandler.schedule({
             cron: '0 * * * *',
         });
         schedulesToCleanup.push(retrySchedule);
@@ -70,16 +70,14 @@ async function runTests() {
         console.log(`    Schedule ID: ${retrySchedule.id}`);
         console.log(`    Handler options preserved: ${JSON.stringify(retryDetails.handlerOptions || {}).slice(0, 80)}`);
 
-        logTest('Schedule created with retry handler',
-            retrySchedule.id.length > 0);
-        logTest('Schedule is active',
-            retryDetails.status === 'active');
+        logTest('Schedule created with retry handler', retrySchedule.id.length > 0);
+        logTest('Schedule is active', retryDetails.status === 'active');
 
         // ========== TEST 2: Schedule with Timeout ==========
         console.log('\nTest 2: Schedule with timeout configuration');
         console.log('-'.repeat(40));
 
-        reseolio.durable(`e2e:opts:timeout-${runId}`, async () => {
+        const timeoutHandler = reseolio.durable(`e2e:opts:timeout-${runId}`, async () => {
             // Simulate some work
             await new Promise(r => setTimeout(r, 100));
             return { executed: true };
@@ -87,7 +85,7 @@ async function runTests() {
             timeoutMs: 30000, // 30 second timeout
         });
 
-        const timeoutSchedule = await reseolio.schedule(`e2e:opts:timeout-${runId}`, {
+        const timeoutSchedule = await timeoutHandler.schedule({
             cron: '*/5 * * * *',
         });
         schedulesToCleanup.push(timeoutSchedule);
@@ -103,7 +101,7 @@ async function runTests() {
         console.log('\nTest 3: Schedule with custom backoff strategy');
         console.log('-'.repeat(40));
 
-        reseolio.durable(`e2e:opts:backoff-${runId}`, async () => {
+        const backoffHandler = reseolio.durable(`e2e:opts:backoff-${runId}`, async () => {
             return { executed: true };
         }, {
             maxAttempts: 3,
@@ -113,7 +111,7 @@ async function runTests() {
             jitter: 0.1,
         });
 
-        const backoffSchedule = await reseolio.schedule(`e2e:opts:backoff-${runId}`, {
+        const backoffSchedule = await backoffHandler.schedule({
             cron: '0 0 * * *', // Daily at midnight
         });
         schedulesToCleanup.push(backoffSchedule);
@@ -136,14 +134,14 @@ async function runTests() {
         ];
 
         for (const opts of optionVariants) {
-            reseolio.durable(`e2e:opts:${opts.name}-${runId}`, async () => {
+            const variantHandler = reseolio.durable(`e2e:opts:${opts.name}-${runId}`, async () => {
                 return { type: opts.name };
             }, {
                 maxAttempts: opts.maxAttempts,
                 timeoutMs: opts.timeoutMs,
             });
 
-            const schedule = await reseolio.schedule(`e2e:opts:${opts.name}-${runId}`, {
+            const schedule = await variantHandler.schedule({
                 cron: '0 6 * * *',
             });
             schedulesToCleanup.push(schedule);

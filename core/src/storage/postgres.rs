@@ -155,12 +155,29 @@ impl Storage for PostgresStorage {
                 cron_expression TEXT NOT NULL,
                 timezone        TEXT NOT NULL DEFAULT 'UTC',
                 handler_options TEXT NOT NULL,
+                args            BYTEA NOT NULL DEFAULT '\x',
                 status          TEXT NOT NULL DEFAULT 'active',
                 next_run_at     BIGINT NOT NULL,
                 last_run_at     BIGINT,
                 created_at      BIGINT NOT NULL,
                 updated_at      BIGINT NOT NULL
             )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(StorageError::from)?;
+
+        // Add args column to schedules if it doesn't exist (migration)
+        sqlx::query(
+            r#"
+            DO $$ 
+            BEGIN 
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                               WHERE table_name = 'schedules' AND column_name = 'args') THEN
+                    ALTER TABLE schedules ADD COLUMN args BYTEA NOT NULL DEFAULT '\x';
+                END IF;
+            END $$;
             "#,
         )
         .execute(&self.pool)
@@ -936,9 +953,9 @@ impl Storage for PostgresStorage {
 
         sqlx::query(
             r#"
-            INSERT INTO schedules (id, name, cron_expression, timezone, handler_options, 
+            INSERT INTO schedules (id, name, cron_expression, timezone, handler_options, args,
                                    status, next_run_at, last_run_at, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             "#,
         )
         .bind(&schedule.id)
@@ -946,6 +963,7 @@ impl Storage for PostgresStorage {
         .bind(&schedule.cron_expression)
         .bind(&schedule.timezone)
         .bind(&options_json)
+        .bind(&schedule.args)
         .bind(schedule.status.as_str())
         .bind(schedule.next_run_at.timestamp())
         .bind(schedule.last_run_at.map(|t| t.timestamp()))
@@ -962,7 +980,7 @@ impl Storage for PostgresStorage {
     async fn get_schedule(&self, schedule_id: &str) -> Result<Option<Schedule>> {
         let row = sqlx::query(
             r#"
-            SELECT id, name, cron_expression, timezone, handler_options, 
+            SELECT id, name, cron_expression, timezone, handler_options, args,
                    status, next_run_at, last_run_at, created_at, updated_at
             FROM schedules WHERE id = $1
             "#,
@@ -981,7 +999,7 @@ impl Storage for PostgresStorage {
     async fn get_schedule_by_name(&self, name: &str) -> Result<Option<Schedule>> {
         let row = sqlx::query(
             r#"
-            SELECT id, name, cron_expression, timezone, handler_options, 
+            SELECT id, name, cron_expression, timezone, handler_options, args,
                    status, next_run_at, last_run_at, created_at, updated_at
             FROM schedules WHERE name = $1
             "#,
@@ -999,7 +1017,7 @@ impl Storage for PostgresStorage {
 
     async fn list_schedules(&self, filter: ScheduleFilter) -> Result<(Vec<Schedule>, i32)> {
         let mut builder = sqlx::QueryBuilder::new(
-            "SELECT id, name, cron_expression, timezone, handler_options, \
+            "SELECT id, name, cron_expression, timezone, handler_options, args, \
              status, next_run_at, last_run_at, created_at, updated_at \
              FROM schedules WHERE 1=1",
         );
@@ -1167,7 +1185,7 @@ impl Storage for PostgresStorage {
 
         let rows = sqlx::query(
             r#"
-            SELECT id, name, cron_expression, timezone, handler_options, 
+            SELECT id, name, cron_expression, timezone, handler_options, args,
                    status, next_run_at, last_run_at, created_at, updated_at
             FROM schedules 
             WHERE status = 'active' AND next_run_at <= $1
@@ -1306,6 +1324,7 @@ fn row_to_schedule(row: &sqlx::postgres::PgRow) -> Result<Schedule> {
         cron_expression: row.get("cron_expression"),
         timezone: row.get("timezone"),
         handler_options,
+        args: row.get("args"),
         status,
         next_run_at: timestamp_to_datetime(row.get("next_run_at")),
         last_run_at: row

@@ -26,10 +26,7 @@ async function main() {
         await reseolio.start();
         const runId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
-        // Define a handler for schedules to trigger
-        reseolio.durable('loadtest:scheduled-task', async () => {
-            return { executed: true, timestamp: Date.now() };
-        });
+
 
         // ========== PHASE 1: Schedule Creation ==========
         console.log(`=> Creating ${NUM_SCHEDULES} schedules...`);
@@ -39,8 +36,12 @@ async function main() {
         const createPromises: Promise<any>[] = [];
 
         for (let i = 0; i < NUM_SCHEDULES; i++) {
+            const scheduledTask = reseolio.durable(`loadtest:scheduled-task-${runId}-${i}`, async () => {
+                return { executed: true, timestamp: Date.now() };
+            });
+
             createPromises.push(
-                reseolio.schedule(`loadtest:schedule-${runId}-${i}`, {
+                scheduledTask.schedule({
                     cron: '0 * * * *', // Hourly
                     timezone: 'UTC',
                 }).then(handle => {

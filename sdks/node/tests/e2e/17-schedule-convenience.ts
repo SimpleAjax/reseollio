@@ -51,16 +51,20 @@ async function runTests() {
         const schedulesToCleanup: any[] = [];
 
         // Define handlers
-        reseolio.durable(`e2e:conv:minute-${runId}`, async () => ({ type: 'minute' }));
-        reseolio.durable(`e2e:conv:hourly-${runId}`, async () => ({ type: 'hourly' }));
-        reseolio.durable(`e2e:conv:daily-${runId}`, async () => ({ type: 'daily' }));
-        reseolio.durable(`e2e:conv:weekly-${runId}`, async () => ({ type: 'weekly' }));
+        // Define handlers
+        const minuteHandler = reseolio.durable(`e2e:conv:minute-${runId}`, async () => ({ type: 'minute' }));
+        const hourlyHandler = reseolio.durable(`e2e:conv:hourly-${runId}`, async () => ({ type: 'hourly' }));
+        const dailyHandler = reseolio.durable(`e2e:conv:daily-${runId}`, async () => ({ type: 'daily' }));
+        const weeklyMonHandler = reseolio.durable(`e2e:conv:weekly-mon-${runId}`, async () => ({ type: 'weekly-mon' }));
+        const weeklyFriHandler = reseolio.durable(`e2e:conv:weekly-fri-${runId}`, async () => ({ type: 'weekly-fri' }));
+        const weeklySunHandler = reseolio.durable(`e2e:conv:weekly-sun-${runId}`, async () => ({ type: 'weekly-sun' }));
+        const daily8Handler = reseolio.durable(`e2e:conv:daily8-${runId}`, async () => ({ type: 'daily8' }));
 
         // ========== TEST 1: everyMinute() ==========
         console.log('Test 1: everyMinute() convenience method');
         console.log('-'.repeat(40));
 
-        const minuteSchedule = await reseolio.everyMinute(`e2e:conv:minute-${runId}`);
+        const minuteSchedule = await minuteHandler.everyMinute();
         schedulesToCleanup.push(minuteSchedule);
 
         const minuteDetails = await minuteSchedule.details();
@@ -85,7 +89,7 @@ async function runTests() {
         console.log('\nTest 2: hourly() convenience method');
         console.log('-'.repeat(40));
 
-        const hourlySchedule = await reseolio.hourly(`e2e:conv:hourly-${runId}`);
+        const hourlySchedule = await hourlyHandler.hourly();
         schedulesToCleanup.push(hourlySchedule);
 
         const hourlyDetails = await hourlySchedule.details();
@@ -110,7 +114,7 @@ async function runTests() {
         console.log('-'.repeat(40));
 
         // Test with default hour (0)
-        const dailyDefaultSchedule = await reseolio.daily(`e2e:conv:daily-${runId}`);
+        const dailyDefaultSchedule = await dailyHandler.daily();
         schedulesToCleanup.push(dailyDefaultSchedule);
 
         const dailyDefaultDetails = await dailyDefaultSchedule.details();
@@ -120,8 +124,7 @@ async function runTests() {
             dailyDefaultDetails.cronExpression === '0 0 * * *');
 
         // Test with specific hour (8 AM)
-        reseolio.durable(`e2e:conv:daily8-${runId}`, async () => ({ type: 'daily8' }));
-        const daily8Schedule = await reseolio.daily(`e2e:conv:daily8-${runId}`, 8);
+        const daily8Schedule = await daily8Handler.daily(8);
         schedulesToCleanup.push(daily8Schedule);
 
         const daily8Details = await daily8Schedule.details();
@@ -142,26 +145,24 @@ async function runTests() {
         console.log('-'.repeat(40));
 
         // Test Monday at 9 AM
-        reseolio.durable(`e2e:conv:weekly-mon-${runId}`, async () => ({ type: 'weekly-mon' }));
-        const weeklyMonSchedule = await reseolio.weekly(`e2e:conv:weekly-mon-${runId}`, 1, 9);
+        const weeklyMonSchedule = await weeklyMonHandler.weekly(1, 9);
         schedulesToCleanup.push(weeklyMonSchedule);
 
         const weeklyMonDetails = await weeklyMonSchedule.details();
         console.log(`    Monday 9 AM - Cron: ${weeklyMonDetails.cronExpression}`);
 
-        logTest('weekly(1, 9) uses cron (0 9 * * 1)',
-            weeklyMonDetails.cronExpression === '0 9 * * 1');
+        logTest('weekly(1, 9) uses cron (0 9 * * 2)',
+            weeklyMonDetails.cronExpression === '0 9 * * 2');
 
         // Test Friday at 5 PM (17:00)
-        reseolio.durable(`e2e:conv:weekly-fri-${runId}`, async () => ({ type: 'weekly-fri' }));
-        const weeklyFriSchedule = await reseolio.weekly(`e2e:conv:weekly-fri-${runId}`, 5, 17);
+        const weeklyFriSchedule = await weeklyFriHandler.weekly(5, 17);
         schedulesToCleanup.push(weeklyFriSchedule);
 
         const weeklyFriDetails = await weeklyFriSchedule.details();
         console.log(`    Friday 5 PM - Cron: ${weeklyFriDetails.cronExpression}`);
 
-        logTest('weekly(5, 17) uses cron (0 17 * * 5)',
-            weeklyFriDetails.cronExpression === '0 17 * * 5');
+        logTest('weekly(5, 17) uses cron (0 17 * * 6)',
+            weeklyFriDetails.cronExpression === '0 17 * * 6');
 
         // Verify next run is on the correct day of week
         const weeklyFriNextRun = await weeklyFriSchedule.nextRunAt();
@@ -177,16 +178,15 @@ async function runTests() {
         console.log('\nTest 5: Weekly on Sunday (JS day 0 → cron day 7)');
         console.log('-'.repeat(40));
 
-        reseolio.durable(`e2e:conv:weekly-sun-${runId}`, async () => ({ type: 'weekly-sun' }));
-        const weeklySunSchedule = await reseolio.weekly(`e2e:conv:weekly-sun-${runId}`, 0, 10);
+        const weeklySunSchedule = await weeklySunHandler.weekly(0, 10);
         schedulesToCleanup.push(weeklySunSchedule);
 
         const weeklySunDetails = await weeklySunSchedule.details();
         console.log(`    Sunday 10 AM - Cron: ${weeklySunDetails.cronExpression}`);
 
-        // Sunday is day 0 in JS but day 7 in cron (cron uses 1-7 where 7=Sunday)
-        logTest('weekly(0, 10) uses cron (0 10 * * 7) for Sunday',
-            weeklySunDetails.cronExpression === '0 10 * * 7');
+        // Sunday is day 0 in JS but day 1 in cron (cron uses 1-7 where 1=Sunday)
+        logTest('weekly(0, 10) uses cron (0 10 * * 1) for Sunday',
+            weeklySunDetails.cronExpression === '0 10 * * 1');
 
         const weeklySunNextRun = await weeklySunSchedule.nextRunAt();
         console.log(`    Day of week: ${weeklySunNextRun.getUTCDay()} (0 = Sunday)`);
@@ -201,7 +201,7 @@ async function runTests() {
         let allActive = true;
         for (const schedule of schedulesToCleanup) {
             const status = await schedule.status();
-            if (status !== 'ACTIVE') {
+            if (status !== 'active') {
                 allActive = false;
                 console.log(`    Schedule ${schedule.id} is ${status}`);
             }

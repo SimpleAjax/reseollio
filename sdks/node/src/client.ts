@@ -5,6 +5,7 @@
 import { spawn, ChildProcess } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { existsSync } from 'node:fs';
 import * as grpc from '@grpc/grpc-js';
 import * as protoLoader from '@grpc/proto-loader';
 import { EventEmitter } from 'node:events';
@@ -268,11 +269,43 @@ export class Reseolio extends EventEmitter {
             return new JobHandle<TResult>(jobId, this);
         };
 
+        // Add schedule method
         // Add metadata
-        (durableFunc as DurableFunction<TArgs, TResult>).functionName = name;
-        (durableFunc as DurableFunction<TArgs, TResult>).options = options;
+        const func = durableFunc as DurableFunction<TArgs, TResult>;
+        func.functionName = name;
+        func.options = options;
 
-        return durableFunc as DurableFunction<TArgs, TResult>;
+        // Add schedule method
+        func.schedule = async (
+            scheduleOptions: ScheduleOptions,
+            ...args: TArgs
+        ): Promise<ScheduleHandle> => {
+            return this.schedule(name, scheduleOptions, args);
+        };
+
+        // Add convenience methods
+        func.everyMinute = async (handlerOptions?: JobOptions, ...args: TArgs): Promise<ScheduleHandle> => {
+            return this.schedule(name, { cron: '* * * * *', handlerOptions }, args);
+        };
+
+        func.hourly = async (handlerOptions?: JobOptions, ...args: TArgs): Promise<ScheduleHandle> => {
+            return this.schedule(name, { cron: '0 * * * *', handlerOptions }, args);
+        };
+
+        func.daily = async (hour: number = 0, handlerOptions?: JobOptions, ...args: TArgs): Promise<ScheduleHandle> => {
+            return this.schedule(name, { cron: `0 ${hour} * * *`, handlerOptions }, args);
+        };
+
+        func.weekly = async (dayOfWeek: number = 0, hour: number = 0, handlerOptions?: JobOptions, ...args: TArgs): Promise<ScheduleHandle> => {
+            // JS 0 (Sunday) -> cron 1 (Sunday)
+            // JS 1 (Monday) -> cron 2 (Monday)
+            const cronDay = dayOfWeek + 1;
+            return this.schedule(name, { cron: `0 ${hour} * * ${cronDay}`, handlerOptions }, args);
+        };
+
+        return func;
+
+
     }
 
     /**
@@ -378,9 +411,10 @@ export class Reseolio extends EventEmitter {
      *     { cron: '0 8 * * *', timezone: 'America/New_York' }
      * );
      */
-    async schedule(
+    private async schedule(
         name: string,
-        options: ScheduleOptions
+        options: ScheduleOptions,
+        args: unknown[] = []
     ): Promise<ScheduleHandle> {
         if (!this.connected) {
             throw new Error('Reseolio client is not connected');
@@ -398,6 +432,7 @@ export class Reseolio extends EventEmitter {
                 timeoutMs: options.handlerOptions.timeoutMs ?? 0,
                 jitter: options.handlerOptions.jitter ?? 0,
             } : undefined,
+            args: Buffer.from(JSON.stringify(args)),
         };
 
         return new Promise((resolve, reject) => {
@@ -552,40 +587,7 @@ export class Reseolio extends EventEmitter {
         });
     }
 
-    // === Convenience Schedule Methods ===
 
-    /**
-     * Create a schedule that runs every minute
-     */
-    async everyMinute(name: string, handlerOptions?: JobOptions): Promise<ScheduleHandle> {
-        return this.schedule(name, { cron: '* * * * *', handlerOptions });
-    }
-
-    /**
-     * Create a schedule that runs every hour at minute 0
-     */
-    async hourly(name: string, handlerOptions?: JobOptions): Promise<ScheduleHandle> {
-        return this.schedule(name, { cron: '0 * * * *', handlerOptions });
-    }
-
-    /**
-     * Create a schedule that runs daily at a specific hour (default: midnight)
-     */
-    async daily(name: string, hour: number = 0, handlerOptions?: JobOptions): Promise<ScheduleHandle> {
-        return this.schedule(name, { cron: `0 ${hour} * * *`, handlerOptions });
-    }
-
-    /**
-     * Create a schedule that runs weekly on a specific day and hour
-     * @param dayOfWeek 0 = Sunday, 1 = Monday, ..., 6 = Saturday
-     */
-    async weekly(name: string, dayOfWeek: number = 0, hour: number = 0, handlerOptions?: JobOptions): Promise<ScheduleHandle> {
-        // The cron crate uses 1-7 for days (1=Monday, 7=Sunday) or SUN, MON, etc.
-        // JavaScript uses 0-6 (0=Sunday), so we need to convert:
-        // JS 0 (Sunday) -> cron 7 (Sunday)
-        const cronDay = dayOfWeek === 0 ? 7 : dayOfWeek;
-        return this.schedule(name, { cron: `0 ${hour} * * ${cronDay}`, handlerOptions });
-    }
 
     // === Private Methods ===
 
@@ -604,16 +606,31 @@ export class Reseolio extends EventEmitter {
         // Cargo builds to target/release/reseolio(.exe)
         const localDevPath = join(__dirname, '..', '..', '..', 'core', 'target', 'release', `reseolio${extension}`);
 
+        // ... (in findCoreBinary)
         const locations = [
             bundledPath,
             localDevPath,
             `reseolio${extension}`, // Try PATH
         ];
 
-        return locations[0]; // Logic: We return the primary candidate.
-        // In a real implementation we should check fs.existsSync(locations[0]) and fallback.
-        // But for this simplified version, let's assume if we are running from node_modules, vendor/ exists.
-        // If running locally, we might want to swap the order or add an existence check.
+        for (const location of locations) {
+            if (existsSync(location) || location.startsWith('reseolio')) { // PATH check is loose
+                // For PATH-based binary, we can't easily check existence without 'which', 
+                // but we can prioritize explicit paths if they exist.
+                if (location.includes('/') || location.includes('\\')) {
+                    if (existsSync(location)) return location;
+                } else {
+                    // Fallback to simpler name if explicit paths fail? 
+                    // Or just return it if we want to rely on PATH.
+                    // But here we want to prioritize the localDevPath if bundledPath is missing.
+                }
+            }
+        }
+
+        // Simpler implementation:
+        if (existsSync(bundledPath)) return bundledPath;
+        if (existsSync(localDevPath)) return localDevPath;
+        return `reseolio${extension}`; // Default to PATH
     }
 
     private async loadProto(): Promise<void> {

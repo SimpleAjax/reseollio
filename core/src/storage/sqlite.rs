@@ -88,6 +88,7 @@ impl Storage for SqliteStorage {
                 cron_expression TEXT NOT NULL,
                 timezone        TEXT NOT NULL DEFAULT 'UTC',
                 handler_options TEXT NOT NULL,
+                args            BLOB NOT NULL DEFAULT x'',
                 status          TEXT NOT NULL DEFAULT 'active',
                 next_run_at     INTEGER NOT NULL,
                 last_run_at     INTEGER,
@@ -102,10 +103,30 @@ impl Storage for SqliteStorage {
                 version INTEGER PRIMARY KEY
             );
 
-            INSERT OR IGNORE INTO schema_version (version) VALUES (2);
+            -- Check schema version and migrate if needed
+            -- For now, we'll just bump the version to trigger new tables if fresh
+            INSERT OR IGNORE INTO schema_version (version) VALUES (3);
             "#,
         )
         .map_err(StorageError::from)?;
+
+        // Check if args column exists in schedules table and add it if missing
+        let args_exists: bool = conn
+            .query_row(
+                "SELECT count(*) FROM pragma_table_info('schedules') WHERE name='args'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0)
+            > 0;
+
+        if !args_exists {
+            conn.execute(
+                "ALTER TABLE schedules ADD COLUMN args BLOB NOT NULL DEFAULT x''",
+                [],
+            )
+            .map_err(StorageError::from)?;
+        }
 
         info!("SQLite migrations applied successfully");
         Ok(())
@@ -780,9 +801,9 @@ impl Storage for SqliteStorage {
 
         conn.execute(
             r#"
-            INSERT INTO schedules (id, name, cron_expression, timezone, handler_options, 
+            INSERT INTO schedules (id, name, cron_expression, timezone, handler_options, args,
                                    status, next_run_at, last_run_at, created_at, updated_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
             "#,
             params![
                 &schedule.id,
@@ -790,6 +811,7 @@ impl Storage for SqliteStorage {
                 &schedule.cron_expression,
                 &schedule.timezone,
                 &options_json,
+                &schedule.args,
                 schedule.status.as_str(),
                 schedule.next_run_at.timestamp(),
                 schedule.last_run_at.map(|t| t.timestamp()),
@@ -809,7 +831,7 @@ impl Storage for SqliteStorage {
         let result = conn
             .query_row(
                 r#"
-                SELECT id, name, cron_expression, timezone, handler_options, 
+                SELECT id, name, cron_expression, timezone, handler_options, args,
                        status, next_run_at, last_run_at, created_at, updated_at
                 FROM schedules WHERE id = ?1
                 "#,
@@ -828,7 +850,7 @@ impl Storage for SqliteStorage {
         let result = conn
             .query_row(
                 r#"
-                SELECT id, name, cron_expression, timezone, handler_options, 
+                SELECT id, name, cron_expression, timezone, handler_options, args,
                        status, next_run_at, last_run_at, created_at, updated_at
                 FROM schedules WHERE name = ?1
                 "#,
@@ -846,7 +868,7 @@ impl Storage for SqliteStorage {
 
         let mut sql = String::from(
             r#"
-            SELECT id, name, cron_expression, timezone, handler_options, 
+            SELECT id, name, cron_expression, timezone, handler_options, args,
                    status, next_run_at, last_run_at, created_at, updated_at
             FROM schedules WHERE 1=1
             "#,
@@ -962,7 +984,7 @@ impl Storage for SqliteStorage {
         let schedule_opt = conn
             .query_row(
                 r#"
-                SELECT id, name, cron_expression, timezone, handler_options, 
+                SELECT id, name, cron_expression, timezone, handler_options, args,
                        status, next_run_at, last_run_at, created_at, updated_at
                 FROM schedules WHERE id = ?1 AND status = 'paused'
                 "#,
@@ -1020,7 +1042,7 @@ impl Storage for SqliteStorage {
         let mut stmt = conn
             .prepare(
                 r#"
-                SELECT id, name, cron_expression, timezone, handler_options, 
+                SELECT id, name, cron_expression, timezone, handler_options, args,
                        status, next_run_at, last_run_at, created_at, updated_at
                 FROM schedules 
                 WHERE status = 'active' AND next_run_at <= ?1
@@ -1145,7 +1167,8 @@ fn row_to_schedule(row: &rusqlite::Row) -> rusqlite::Result<Schedule> {
     let options_str: String = row.get(4)?;
     let handler_options: JobOptions = serde_json::from_str(&options_str).unwrap_or_default();
 
-    let status_str: String = row.get(5)?;
+    // Status is now at index 6
+    let status_str: String = row.get(6)?;
     let status = ScheduleStatus::from_str(&status_str).unwrap_or(ScheduleStatus::Active);
 
     Ok(Schedule {
@@ -1154,10 +1177,11 @@ fn row_to_schedule(row: &rusqlite::Row) -> rusqlite::Result<Schedule> {
         cron_expression: row.get(2)?,
         timezone: row.get(3)?,
         handler_options,
+        args: row.get(5)?,
         status,
-        next_run_at: timestamp_to_datetime(row.get(6)?),
-        last_run_at: row.get::<_, Option<i64>>(7)?.map(timestamp_to_datetime),
-        created_at: timestamp_to_datetime(row.get(8)?),
-        updated_at: timestamp_to_datetime(row.get(9)?),
+        next_run_at: timestamp_to_datetime(row.get(7)?),
+        last_run_at: row.get::<_, Option<i64>>(8)?.map(timestamp_to_datetime),
+        created_at: timestamp_to_datetime(row.get(9)?),
+        updated_at: timestamp_to_datetime(row.get(10)?),
     })
 }

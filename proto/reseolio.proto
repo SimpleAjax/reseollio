@@ -200,6 +200,7 @@ message Schedule {
   int64 created_at = 8;             // Creation timestamp (Unix ms)
   int64 updated_at = 9;             // Last update timestamp (Unix ms)
   JobOptions handler_options = 10;  // Options applied to triggered jobs
+  bytes args = 11;                  // Serialized function arguments (JSON)
 }
 
 enum ScheduleStatus {
@@ -214,6 +215,7 @@ message CreateScheduleRequest {
   string cron_expression = 2;       // Cron expression
   string timezone = 3;              // IANA timezone (default: "UTC")
   JobOptions handler_options = 4;   // Options applied to triggered jobs
+  bytes args = 5;                   // Serialized function arguments (JSON)
 }
 
 message GetScheduleRequest {

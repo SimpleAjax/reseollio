@@ -49,7 +49,7 @@ async function runTests() {
         const runId = generateUniqueId();
 
         // Define handler
-        reseolio.durable(`e2e:idem:task-${runId}`, async () => {
+        const taskHandler = reseolio.durable(`e2e:idem:task-${runId}`, async () => {
             return { executed: true };
         });
 
@@ -57,7 +57,7 @@ async function runTests() {
         console.log('Test 1: Schedule name uniqueness');
         console.log('-'.repeat(40));
 
-        const schedule1 = await reseolio.schedule(`e2e:idem:task-${runId}`, {
+        const schedule1 = await taskHandler.schedule({
             cron: '0 * * * *',
         });
         console.log(`    First schedule ID: ${schedule1.id}`);
@@ -68,7 +68,7 @@ async function runTests() {
         let schedule2Id = '';
 
         try {
-            const schedule2 = await reseolio.schedule(`e2e:idem:task-${runId}`, {
+            const schedule2 = await taskHandler.schedule({
                 cron: '0 * * * *',
             });
             duplicateCreated = true;
@@ -94,7 +94,7 @@ async function runTests() {
         console.log('\nTest 2: Multiple creates of same name');
         console.log('-'.repeat(40));
 
-        reseolio.durable(`e2e:idem:multi-${runId}`, async () => {
+        const multiHandler = reseolio.durable(`e2e:idem:multi-${runId}`, async () => {
             return { executed: true };
         });
 
@@ -103,7 +103,7 @@ async function runTests() {
 
         for (let i = 0; i < creates; i++) {
             try {
-                const s = await reseolio.schedule(`e2e:idem:multi-${runId}`, {
+                const s = await multiHandler.schedule({
                     cron: '0 12 * * *',
                 });
                 scheduleIds.push(s.id);
@@ -174,7 +174,7 @@ async function runTests() {
         console.log('\nTest 6: Concurrent creates with same name');
         console.log('-'.repeat(40));
 
-        reseolio.durable(`e2e:idem:concurrent-${runId}`, async () => {
+        const concurrentHandler = reseolio.durable(`e2e:idem:concurrent-${runId}`, async () => {
             return { executed: true };
         });
 
@@ -183,7 +183,7 @@ async function runTests() {
 
         for (let i = 0; i < concurrentCount; i++) {
             concurrentPromises.push(
-                reseolio.schedule(`e2e:idem:concurrent-${runId}`, {
+                concurrentHandler.schedule({
                     cron: '0 3 * * *',
                 }).catch((e: any) => ({ error: e.message }))
             );

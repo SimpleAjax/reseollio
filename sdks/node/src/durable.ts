@@ -2,8 +2,9 @@
  * Durable function wrapper
  */
 
-import type { JobOptions, DurableHandler } from './types';
+import type { JobOptions, DurableHandler, ScheduleOptions } from './types';
 import type { JobHandle } from './job';
+import type { ScheduleHandle } from './schedule';
 
 /**
  * Options for durable function registration (no idempotencyKey)
@@ -24,6 +25,16 @@ export interface DurableFunction<TArgs extends unknown[], TResult> {
     functionName: string;
     /** The default function options (can be overridden per execution) */
     options: DurableOptions;
+    /** Schedule this function */
+    schedule(options: ScheduleOptions, ...args: TArgs): Promise<ScheduleHandle>;
+    /** Schedule every minute */
+    everyMinute(handlerOptions?: JobOptions, ...args: TArgs): Promise<ScheduleHandle>;
+    /** Schedule hourly at minute 0 */
+    hourly(handlerOptions?: JobOptions, ...args: TArgs): Promise<ScheduleHandle>;
+    /** Schedule daily at specific hour (0-23) */
+    daily(hour?: number, handlerOptions?: JobOptions, ...args: TArgs): Promise<ScheduleHandle>;
+    /** Schedule weekly on specific day and hour */
+    weekly(dayOfWeek?: number, hour?: number, handlerOptions?: JobOptions, ...args: TArgs): Promise<ScheduleHandle>;
 }
 
 /**

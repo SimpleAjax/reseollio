@@ -119,7 +119,7 @@ impl<S: Storage> CronScheduler<S> {
         // Create the job
         let new_job = NewJob {
             name: schedule.name.clone(),
-            args: vec![], // Empty args - the handler knows what to do
+            args: schedule.args.clone(), // Pass args from schedule
             options: schedule.handler_options.clone(),
             idempotency_key: Some(schedule_run_id.clone()),
         };

@@ -36,7 +36,7 @@ async function main() {
 
     // Schedule the report to run every day at 8 AM New York time
     console.log('📅 Creating daily schedule...');
-    const dailyReportSchedule = await reseolio.schedule('reports:daily-summary', {
+    const dailyReportSchedule = await generateDailyReport.schedule({
         cron: '0 8 * * *',           // 8 AM every day
         timezone: 'America/New_York', // Eastern Time
     });

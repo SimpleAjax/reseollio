@@ -53,10 +53,14 @@ async function main() {
         );
 
         // Define schedule handlers
+        // Define schedule handlers
+        const scheduleHandlers: any[] = [];
         for (let i = 0; i < NUM_SCHEDULES; i++) {
-            reseolio.durable(`loadtest:mixed-schedule-${runId}-${i}`, async () => {
-                return { schedule: i, executed: true };
-            });
+            scheduleHandlers.push(
+                reseolio.durable(`loadtest:mixed-schedule-${runId}-${i}`, async () => {
+                    return { schedule: i, executed: true };
+                })
+            );
         }
 
         const testStart = Date.now();
@@ -78,10 +82,10 @@ async function main() {
         // Phase 1: Create schedules
         for (let i = 0; i < NUM_SCHEDULES; i++) {
             schedulePromises.push(
-                reseolio.schedule(`loadtest:mixed-schedule-${runId}-${i}`, {
+                scheduleHandlers[i].schedule({
                     cron: '0 * * * *',
                     timezone: 'UTC',
-                }).then(handle => {
+                }).then((handle: any) => {
                     scheduleHandles.push(handle);
                     scheduleOpsCompleted++;
                     return handle;

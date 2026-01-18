@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Worker Registry for Push-Based Job Scheduling
 //!
 //! This module maintains a registry of all connected workers and their capacity.

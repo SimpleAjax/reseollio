@@ -36,16 +36,16 @@ async function main() {
 
     // Example 1: Business hours only (9 AM - 5 PM, weekdays)
     console.log('📅 Schedule 1: Business hours only');
-    const businessHoursSchedule = await reseolio.schedule('notifications:reminder', {
+    const businessHoursSchedule = await sendReminder.schedule({
         cron: '0 9-17 * * 1-5', // Every hour from 9 AM to 5 PM, Monday-Friday
         timezone: 'America/New_York',
-    });
+    }, 'America/New_York');
     console.log(`  ✅ Created: ${businessHoursSchedule.id}`);
     console.log(`  Next run: ${(await businessHoursSchedule.nextRunAt()).toLocaleString()}\n`);
 
     // Example 2: First day of every month at midnight
     console.log('📅 Schedule 2: Monthly payroll (1st of month)');
-    const monthlySchedule = await reseolio.schedule('payroll:process', {
+    const monthlySchedule = await processPayroll.schedule({
         cron: '0 0 1 * *', // Midnight on the 1st of every month
         timezone: 'UTC',
     });
@@ -54,7 +54,7 @@ async function main() {
 
     // Example 3: Every 15 minutes
     console.log('📅 Schedule 3: High-frequency health checks');
-    const frequentSchedule = await reseolio.schedule('system:health-check', {
+    const frequentSchedule = await healthCheck.schedule({
         cron: '*/15 * * * *', // Every 15 minutes
         timezone: 'UTC',
     });
@@ -67,7 +67,13 @@ async function main() {
 
     console.log('📅 Schedule 4: Regional notifications (9 AM in each timezone)');
     for (const tz of timezones) {
-        const schedule = await reseolio.schedule(`notifications:reminder:${tz}`, {
+        // Create an alias handler for this region (implicit logic: different schedule name needs different handler name)
+        const regionalHandler = reseolio.durable(`notifications:reminder:${tz}`, async () => {
+            console.log(`📧 Sending regional reminder for ${tz}`);
+            return { sent: true, timezone: tz };
+        });
+
+        const schedule = await regionalHandler.schedule({
             cron: '0 9 * * *', // 9 AM daily
             timezone: tz,
         });

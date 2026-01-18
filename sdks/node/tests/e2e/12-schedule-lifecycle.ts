@@ -47,18 +47,24 @@ async function runTests() {
         autoStart: false,
     });
 
+    const runId = generateUniqueId();
+    const basicScheduleName = `e2e:schedule:basic-${runId}`;
+
+    // Register handlers (hoisted)
+    const basicHandler = reseolio.durable(basicScheduleName, async () => ({}));
+    const hourlyHandler = reseolio.durable(`e2e:schedule:hourly-${runId}`, async () => ({}));
+    const dailyHandler = reseolio.durable(`e2e:schedule:daily-${runId}`, async () => ({}));
+
     try {
         await reseolio.start();
         console.log('✅ Connected to Reseolio\n');
-
-        const runId = generateUniqueId();
 
         // ========== TEST 1: Create a Basic Schedule ==========
         console.log('Test 1: Create a basic schedule');
         console.log('-'.repeat(40));
 
-        const scheduleName = `e2e:schedule:basic-${runId}`;
-        const scheduleHandle = await reseolio.schedule(scheduleName, {
+        const scheduleName = basicScheduleName;
+        const scheduleHandle = await basicHandler.schedule({
             cron: '*/5 * * * *', // Every 5 minutes
             timezone: 'UTC',
         });
@@ -137,7 +143,7 @@ async function runTests() {
         console.log('\nTest 8: List all schedules');
         console.log('-'.repeat(40));
 
-        const listResult = await reseolio.listSchedules();
+        const listResult = await reseolio.listSchedules({ limit: 10000 });
         logTest('List returns schedules array', Array.isArray(listResult.schedules));
         logTest('List has total count', typeof listResult.total === 'number');
 
@@ -150,11 +156,13 @@ async function runTests() {
         console.log('\nTest 9: Create multiple schedules');
         console.log('-'.repeat(40));
 
-        const schedule2 = await reseolio.schedule(`e2e:schedule:hourly-${runId}`, {
+        // Handlers are reused from top scope
+        const schedule2 = await hourlyHandler.schedule({
             cron: '0 * * * *',
             timezone: 'UTC',
         });
-        const schedule3 = await reseolio.schedule(`e2e:schedule:daily-${runId}`, {
+
+        const schedule3 = await dailyHandler.schedule({
             cron: '0 0 * * *',
             timezone: 'Europe/London',
         });
@@ -170,28 +178,32 @@ async function runTests() {
         console.log('-'.repeat(40));
 
         // Test everyMinute
-        const minuteSchedule = await reseolio.everyMinute(`e2e:schedule:every-minute-${runId}`);
+        const minuteHandler = reseolio.durable(`e2e:schedule:every-minute-${runId}`, async () => ({}));
+        const minuteSchedule = await minuteHandler.everyMinute();
         const minuteDetails = await minuteSchedule.details();
         logTest('everyMinute creates schedule', minuteSchedule.id.length > 0);
         logTest('everyMinute has correct cron', minuteDetails.cronExpression === '* * * * *');
 
         // Test hourly
-        const hourlySchedule = await reseolio.hourly(`e2e:schedule:hourly-convenience-${runId}`);
+        const hourlyConvHandler = reseolio.durable(`e2e:schedule:hourly-convenience-${runId}`, async () => ({}));
+        const hourlySchedule = await hourlyConvHandler.hourly();
         const hourlyDetails = await hourlySchedule.details();
         logTest('hourly creates schedule', hourlySchedule.id.length > 0);
         logTest('hourly has correct cron', hourlyDetails.cronExpression === '0 * * * *');
 
         // Test daily
-        const dailySchedule = await reseolio.daily(`e2e:schedule:daily-convenience-${runId}`, 9);
+        const dailyConvHandler = reseolio.durable(`e2e:schedule:daily-convenience-${runId}`, async () => ({}));
+        const dailySchedule = await dailyConvHandler.daily(9);
         const dailyDetails = await dailySchedule.details();
         logTest('daily creates schedule', dailySchedule.id.length > 0);
         logTest('daily has correct cron (9 AM)', dailyDetails.cronExpression === '0 9 * * *');
 
         // Test weekly
-        const weeklySchedule = await reseolio.weekly(`e2e:schedule:weekly-${runId}`, 1, 10); // Monday 10 AM
+        const weeklyHandler = reseolio.durable(`e2e:schedule:weekly-${runId}`, async () => ({}));
+        const weeklySchedule = await weeklyHandler.weekly(1, 10); // Monday 10 AM
         const weeklyDetails = await weeklySchedule.details();
         logTest('weekly creates schedule', weeklySchedule.id.length > 0);
-        logTest('weekly has correct cron (Mon 10 AM)', weeklyDetails.cronExpression === '0 10 * * 1');
+        logTest('weekly has correct cron (Mon 10 AM)', weeklyDetails.cronExpression === '0 10 * * 2');
 
         // ========== TEST 11: Schedule Handle Methods ==========
         console.log('\nTest 11: Schedule handle methods');

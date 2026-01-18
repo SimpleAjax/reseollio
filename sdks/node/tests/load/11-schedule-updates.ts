@@ -31,10 +31,14 @@ async function main() {
         const runId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
         // Define handlers
+        // Define handlers
+        const handlers: any[] = [];
         for (let i = 0; i < NUM_SCHEDULES; i++) {
-            reseolio.durable(`loadtest:update-test-${runId}-${i}`, async () => {
-                return { executed: true, schedule: i };
-            });
+            handlers.push(
+                reseolio.durable(`loadtest:update-test-${runId}-${i}`, async () => {
+                    return { executed: true, schedule: i };
+                })
+            );
         }
 
         // ========== PHASE 1: Create Schedules ==========
@@ -43,7 +47,7 @@ async function main() {
 
         const scheduleHandles = [];
         for (let i = 0; i < NUM_SCHEDULES; i++) {
-            const handle = await reseolio.schedule(`loadtest:update-test-${runId}-${i}`, {
+            const handle = await handlers[i].schedule({
                 cron: '0 * * * *',
                 timezone: 'UTC',
             });

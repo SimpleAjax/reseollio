@@ -55,7 +55,8 @@ async function runTests() {
         console.log('-'.repeat(40));
 
         try {
-            await reseolio.schedule(`e2e:edge:invalid-cron-${runId}`, {
+            const h = reseolio.durable(`e2e:edge:invalid-cron-${runId}`, async () => ({}));
+            await h.schedule({
                 cron: 'not a valid cron',
             });
             logTest('Invalid cron rejected', false, 'Expected error but schedule was created');
@@ -69,7 +70,8 @@ async function runTests() {
         console.log('-'.repeat(40));
 
         try {
-            await reseolio.schedule(`e2e:edge:malformed-cron-${runId}`, {
+            const h = reseolio.durable(`e2e:edge:malformed-cron-${runId}`, async () => ({}));
+            await h.schedule({
                 cron: '* *', // Only 2 fields, need 5
             });
             logTest('Malformed cron rejected', false, 'Expected error but schedule was created');
@@ -83,7 +85,8 @@ async function runTests() {
         console.log('-'.repeat(40));
 
         try {
-            await reseolio.schedule(`e2e:edge:invalid-tz-${runId}`, {
+            const h = reseolio.durable(`e2e:edge:invalid-tz-${runId}`, async () => ({}));
+            await h.schedule({
                 cron: '* * * * *',
                 timezone: 'Invalid/Timezone',
             });
@@ -112,7 +115,9 @@ async function runTests() {
         let validCount = 0;
         for (const test of validCronTests) {
             try {
-                const s = await reseolio.schedule(`e2e:edge:${test.name}-${runId}`, {
+                const name = `e2e:edge:${test.name}-${runId}`;
+                const h = reseolio.durable(name, async () => ({}));
+                const s = await h.schedule({
                     cron: test.cron,
                 });
                 validCount++;
@@ -143,7 +148,9 @@ async function runTests() {
         let tzCount = 0;
         for (const tz of validTimezones) {
             try {
-                const s = await reseolio.schedule(`e2e:edge:tz-${tz.replace('/', '-')}-${runId}`, {
+                const name = `e2e:edge:tz-${tz.replace('/', '-')}-${runId}`;
+                const h = reseolio.durable(name, async () => ({}));
+                const s = await h.schedule({
                     cron: '0 0 * * *',
                     timezone: tz,
                 });
@@ -166,7 +173,8 @@ async function runTests() {
         console.log('\nTest 6: Operations on deleted schedule');
         console.log('-'.repeat(40));
 
-        const toDelete = await reseolio.schedule(`e2e:edge:to-delete-${runId}`, {
+        const toDeleteHandler = reseolio.durable(`e2e:edge:to-delete-${runId}`, async () => ({}));
+        const toDelete = await toDeleteHandler.schedule({
             cron: '0 0 * * *',
         });
         const deleteSuccess = await toDelete.delete();
@@ -210,7 +218,8 @@ async function runTests() {
         let namesCount = 0;
         for (const name of specialNames) {
             try {
-                const s = await reseolio.schedule(name, { cron: '0 0 * * *' });
+                const h = reseolio.durable(name, async () => ({}));
+                const s = await h.schedule({ cron: '0 0 * * *' });
                 const details = await s.details();
                 if (details.name === name) {
                     namesCount++;
@@ -242,7 +251,8 @@ async function runTests() {
         console.log('\nTest 9: Double pause/resume operations');
         console.log('-'.repeat(40));
 
-        const doubleOps = await reseolio.schedule(`e2e:edge:double-ops-${runId}`, {
+        const doubleHandler = reseolio.durable(`e2e:edge:double-ops-${runId}`, async () => ({}));
+        const doubleOps = await doubleHandler.schedule({
             cron: '0 0 * * *',
         });
 
@@ -279,7 +289,9 @@ async function runTests() {
         let boundaryCount = 0;
         for (const test of boundaryCrons) {
             try {
-                const s = await reseolio.schedule(`e2e:edge:${test.name}-${runId}`, {
+                const name = `e2e:edge:${test.name}-${runId}`;
+                const h = reseolio.durable(name, async () => ({}));
+                const s = await h.schedule({
                     cron: test.cron,
                 });
                 boundaryCount++;

@@ -47,7 +47,7 @@ async function runTests() {
         const runId = generateUniqueId();
 
         // Define handlers
-        reseolio.durable(`e2e:tz:task-${runId}`, async () => {
+        const taskHandler = reseolio.durable(`e2e:tz:task-${runId}`, async () => {
             return { executed: true };
         });
 
@@ -55,7 +55,7 @@ async function runTests() {
         console.log('Test 1: Schedule with UTC timezone');
         console.log('-'.repeat(40));
 
-        const utcSchedule = await reseolio.schedule(`e2e:tz:task-${runId}`, {
+        const utcSchedule = await taskHandler.schedule({
             cron: '0 12 * * *', // 12:00 PM daily
             timezone: 'UTC',
         });
@@ -76,11 +76,11 @@ async function runTests() {
         console.log('\nTest 2: Schedule with US Eastern timezone');
         console.log('-'.repeat(40));
 
-        reseolio.durable(`e2e:tz:eastern-${runId}`, async () => {
+        const easternHandler = reseolio.durable(`e2e:tz:eastern-${runId}`, async () => {
             return { executed: true };
         });
 
-        const easternSchedule = await reseolio.schedule(`e2e:tz:eastern-${runId}`, {
+        const easternSchedule = await easternHandler.schedule({
             cron: '0 9 * * *', // 9:00 AM daily
             timezone: 'America/New_York',
         });
@@ -105,11 +105,11 @@ async function runTests() {
         console.log('\nTest 3: Schedule with Asia/Tokyo timezone');
         console.log('-'.repeat(40));
 
-        reseolio.durable(`e2e:tz:tokyo-${runId}`, async () => {
+        const tokyoHandler = reseolio.durable(`e2e:tz:tokyo-${runId}`, async () => {
             return { executed: true };
         });
 
-        const tokyoSchedule = await reseolio.schedule(`e2e:tz:tokyo-${runId}`, {
+        const tokyoSchedule = await tokyoHandler.schedule({
             cron: '0 9 * * *', // 9:00 AM daily
             timezone: 'Asia/Tokyo',
         });
@@ -134,11 +134,11 @@ async function runTests() {
         console.log('\nTest 4: Schedule with Europe/London timezone');
         console.log('-'.repeat(40));
 
-        reseolio.durable(`e2e:tz:london-${runId}`, async () => {
+        const londonHandler = reseolio.durable(`e2e:tz:london-${runId}`, async () => {
             return { executed: true };
         });
 
-        const londonSchedule = await reseolio.schedule(`e2e:tz:london-${runId}`, {
+        const londonSchedule = await londonHandler.schedule({
             cron: '30 14 * * *', // 2:30 PM daily
             timezone: 'Europe/London',
         });
@@ -188,11 +188,11 @@ async function runTests() {
         console.log('\nTest 6: Default timezone when not specified');
         console.log('-'.repeat(40));
 
-        reseolio.durable(`e2e:tz:default-${runId}`, async () => {
+        const defaultHandler = reseolio.durable(`e2e:tz:default-${runId}`, async () => {
             return { executed: true };
         });
 
-        const defaultSchedule = await reseolio.schedule(`e2e:tz:default-${runId}`, {
+        const defaultSchedule = await defaultHandler.schedule({
             cron: '0 6 * * *', // 6 AM daily, no timezone specified
         });
 

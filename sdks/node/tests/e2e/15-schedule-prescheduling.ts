@@ -52,7 +52,7 @@ async function runTests() {
 
         // Define handlers for our schedules
         let handlerCallCount = 0;
-        reseolio.durable(`e2e:preschedule:task-${runId}`, async () => {
+        const taskHandler = reseolio.durable(`e2e:preschedule:task-${runId}`, async () => {
             handlerCallCount++;
             console.log(`    [Handler] Execution #${handlerCallCount}`);
             return { executed: true, count: handlerCallCount };
@@ -65,7 +65,7 @@ async function runTests() {
         // Create a schedule that runs every minute
         // Due to the poll interval optimization, if the next_run_at is within
         // the poll interval (10 seconds), a job should be pre-created
-        const everyMinuteSchedule = await reseolio.schedule(`e2e:preschedule:task-${runId}`, {
+        const everyMinuteSchedule = await taskHandler.schedule({
             cron: '* * * * *', // Every minute
         });
 
@@ -75,7 +75,7 @@ async function runTests() {
         console.log(`    Status: ${details.status}`);
 
         logTest('Schedule created with every-minute cron',
-            details.status === 'ACTIVE' && details.nextRunAt > 0);
+            details.status === 'active' && details.nextRunAt > 0);
 
         // ========== TEST 2: Verify Next Run is Calculated ==========
         console.log('\nTest 2: Verify next run time calculation');
@@ -100,15 +100,17 @@ async function runTests() {
         const scheduleCount = 5;
         const rapidSchedules = [];
 
+        const rapidHandlers = [];
         for (let i = 0; i < scheduleCount; i++) {
-            reseolio.durable(`e2e:preschedule:rapid-${runId}-${i}`, async () => {
+            const handler = reseolio.durable(`e2e:preschedule:rapid-${runId}-${i}`, async () => {
                 return { executed: true, index: i };
             });
+            rapidHandlers.push(handler);
         }
 
         const createStart = Date.now();
         for (let i = 0; i < scheduleCount; i++) {
-            const s = await reseolio.schedule(`e2e:preschedule:rapid-${runId}-${i}`, {
+            const s = await rapidHandlers[i].schedule({
                 cron: '*/5 * * * *', // Every 5 minutes
             });
             rapidSchedules.push(s);
@@ -122,9 +124,9 @@ async function runTests() {
         let allActive = true;
         for (const s of rapidSchedules) {
             const d = await s.details();
-            if (d.status !== 'ACTIVE') {
+            if (d.status !== 'active') {
                 allActive = false;
-                console.log(`    Schedule ${s.id} is ${d.status}, expected ACTIVE`);
+                console.log(`    Schedule ${s.id} is ${d.status}, expected active`);
             }
         }
 
@@ -180,7 +182,7 @@ async function runTests() {
         console.log(`    Next run after resume: ${afterResume.toISOString()}`);
 
         logTest('Status correctly transitions pause -> resume',
-            pausedStatus === 'PAUSED' && resumedStatus === 'ACTIVE');
+            pausedStatus === 'paused' && resumedStatus === 'active');
 
         // ========== TEST 6: List Schedules with Pagination ==========
         console.log('\nTest 6: List schedules with pagination');
@@ -195,9 +197,11 @@ async function runTests() {
             limitedList.schedules.length <= 3);
 
         // List all
-        const fullList = await reseolio.listSchedules({ limit: 100 });
+        const fullList = await reseolio.listSchedules({ limit: 10000 });
+        console.log(`    List returned: ${fullList.schedules.length}`);
         const ourSchedules = fullList.schedules.filter(s => s.name.includes(runId));
         console.log(`    Our schedules in this run: ${ourSchedules.length}`);
+        ourSchedules.forEach(s => console.log(`      Found: ${s.name}`));
 
         // Should have at least 6 schedules (1 main + 5 rapid)
         logTest('All created schedules found', ourSchedules.length >= 6);

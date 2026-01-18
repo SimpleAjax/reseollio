@@ -215,6 +215,8 @@ pub struct Schedule {
     pub cron_expression: String,     // e.g., "0 8 * * *"
     pub timezone: String,            // IANA timezone, default "UTC"
     pub handler_options: JobOptions, // Options applied to each triggered job
+    #[serde(default)] // For backwards compatibility
+    pub args: Vec<u8>, // Arguments passed to the job
     pub status: ScheduleStatus,
     pub next_run_at: DateTime<Utc>, // Pre-computed next trigger time
     pub last_run_at: Option<DateTime<Utc>>, // Last trigger time
@@ -229,6 +231,7 @@ pub struct NewSchedule {
     pub cron_expression: String,
     pub timezone: Option<String>,
     pub handler_options: Option<JobOptions>,
+    pub args: Option<Vec<u8>>,
 }
 
 impl NewSchedule {
@@ -241,6 +244,7 @@ impl NewSchedule {
             cron_expression: self.cron_expression,
             timezone: self.timezone.unwrap_or_else(|| "UTC".to_string()),
             handler_options: self.handler_options.unwrap_or_default(),
+            args: self.args.unwrap_or_default(),
             status: ScheduleStatus::Active,
             next_run_at,
             last_run_at: None,

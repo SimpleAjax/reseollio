@@ -44,22 +44,19 @@ async function main() {
         await reseolio.start();
         const runId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
-        // Define handlers for each schedule
+        // Create handlers and schedules
+        console.log(`=> Creating ${NUM_SCHEDULES} every-minute schedules...`);
+        const createStart = Date.now();
+        const scheduleHandles = [];
+
         for (let i = 0; i < NUM_SCHEDULES; i++) {
-            reseolio.durable(`loadtest:trigger-${runId}-${i}`, async () => {
+            const task = reseolio.durable(`loadtest:trigger-${runId}-${i}`, async () => {
                 // Simulate some work
                 await new Promise(r => setTimeout(r, 50));
                 return { executed: true, schedule: i, timestamp: Date.now() };
             });
-        }
 
-        // ========== PHASE 1: Create Schedules ==========
-        console.log(`=> Creating ${NUM_SCHEDULES} every-minute schedules...`);
-        const createStart = Date.now();
-
-        const scheduleHandles = [];
-        for (let i = 0; i < NUM_SCHEDULES; i++) {
-            const handle = await reseolio.schedule(`loadtest:trigger-${runId}-${i}`, {
+            const handle = await task.schedule({
                 cron: '* * * * *', // Every minute
                 timezone: 'UTC',
             });

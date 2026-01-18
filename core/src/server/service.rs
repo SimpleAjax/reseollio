@@ -778,6 +778,11 @@ impl<S: Storage> Reseolio for ReseolioServer<S> {
                 Some(req.timezone)
             },
             handler_options: Some(handler_options),
+            args: if req.args.is_empty() {
+                None
+            } else {
+                Some(req.args)
+            },
         };
 
         let schedule = self
@@ -1244,6 +1249,7 @@ fn schedule_to_proto(schedule: &crate::storage::Schedule) -> proto::Schedule {
         created_at: schedule.created_at.timestamp_millis(),
         updated_at: schedule.updated_at.timestamp_millis(),
         handler_options: Some(job_options_to_proto(&schedule.handler_options)),
+        args: schedule.args.clone(),
     }
 }
 
