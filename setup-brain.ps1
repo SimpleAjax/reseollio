@@ -34,10 +34,10 @@ try {
     git config core.sparseCheckout true
     git sparse-checkout init --cone
     
-    # Ensure on main branch
-    git checkout main 2>$null
+    # Ensure on master branch
+    git checkout master 2>$null
     if ($LASTEXITCODE -ne 0) {
-        git checkout -b main
+        git checkout -b master
     }
 
     # 4. Set Specific Folder
@@ -75,7 +75,7 @@ try {
     git commit -m "Init structure for $ProjectName" 
     
     # Push
-    git push origin main
+    git push origin master
 
 }
 catch {
