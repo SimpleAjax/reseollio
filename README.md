@@ -349,6 +349,26 @@ We welcome contributions!
 
 ---
 
+## 🧩 The Reseolio Ecosystem
+
+Reseolio is the core durability engine. We are building a suite of open-source tools and modules to solve specific infrastructure challenges:
+
+### 🛠️ Developer Tools (Free)
+*Coming soon tools that solve annoying backend problems:*
+
+### 📦 Specialized Modules
+*Coming soon Drop-in durable backends built on Reseolio:*
+- **Reseolio Recce**: High-performance financial reconciliation engine.
+- **Reseolio Meter**: Usage-based billing and event counting.
+
+### 🏢 Enterprise & Implementation Services
+Need help designing a crash-proof payment system? [**Cimulink**](https://cimulink.com) provides specialized consulting:
+- **Architecture Audits**: Identify race conditions and data risks in your current stack.
+- **Managed Implementation**: We integrate Reseolio into your core business flows (Payments, Approvals, Logistics).
+- **Priority Support**: SLA-backed support for your critical infrastructure.
+
+---
+
 ## 📄 License
 
 MIT © [Reseolio Contributors](https://github.com/SimpleAjax/reseollio)

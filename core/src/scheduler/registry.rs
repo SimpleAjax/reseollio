@@ -43,15 +43,6 @@ impl WorkerInfo {
 }
 
 /// Thread-safe worker registry
-///
-/// TODO: Leader Election for HA
-/// Currently, the scheduler runs on a single instance. For high availability,
-/// implement leader election so that only one instance runs the scheduler at a time.
-/// Options:
-/// - PostgreSQL advisory locks (when Postgres storage is implemented)
-/// - Redis SETNX with TTL renewal
-/// - etcd/Consul for distributed coordination
-/// This ensures no duplicate job assignments across multiple instances.
 #[derive(Clone)]
 pub struct WorkerRegistry {
     inner: Arc<RwLock<RegistryInner>>,
