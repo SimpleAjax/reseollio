@@ -64,14 +64,19 @@ pub struct Scheduler<S: Storage> {
 
 impl<S: Storage> Scheduler<S> {
     /// Create a new scheduler with the given storage and worker registry
-    pub fn new(storage: S, registry: WorkerRegistry, notify: Arc<Notify>) -> Self {
+    pub fn new(
+        storage: S,
+        registry: WorkerRegistry,
+        notify: Arc<Notify>,
+        shutdown: Arc<Notify>,
+    ) -> Self {
         Self {
             storage,
             registry,
             poll_interval: Duration::from_millis(30), // Faster response with smart scheduler
             batch_size: 100,                          // Balanced batch size
             notify,
-            shutdown: Arc::new(Notify::new()),
+            shutdown,
         }
     }
 
@@ -310,7 +315,7 @@ mod tests {
         let registry = WorkerRegistry::new();
         let notify = Arc::new(Notify::new());
 
-        let scheduler = Scheduler::new(storage, registry, notify)
+        let scheduler = Scheduler::new(storage, registry, notify, Arc::new(Notify::new()))
             .with_poll_interval(Duration::from_millis(100))
             .with_batch_size(50);
 

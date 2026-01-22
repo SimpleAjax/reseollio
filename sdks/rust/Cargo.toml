@@ -1,0 +1,59 @@
+[package]
+name = "reseolio"
+version = "0.1.0"
+edition = "2021"
+authors = ["SimpleAjax"]
+description = "Durable Execution for Modern Backends - Rust SDK"
+license = "MIT"
+repository = "https://github.com/SimpleAjax/reseollio"
+keywords = ["durable", "execution", "workflow", "job", "queue"]
+categories = ["asynchronous", "development-tools"]
+readme = "README.md"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# gRPC
+tonic = "0.12"
+prost = "0.13"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# UUID generation
+uuid = { version = "1", features = ["v4"] }
+
+# Tracing/Observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+opentelemetry = { version = "0.24", optional = true }
+opentelemetry-otlp = { version = "0.17", optional = true }
+tracing-opentelemetry = { version = "0.25", optional = true }
+
+# Error handling
+thiserror = "1"
+anyhow = "1"
+
+# Async utilities
+futures = "0.3"
+async-trait = "0.1"
+tokio-stream = "0.1"
+
+# Process management
+which = "6"
+
+# Time handling
+chrono = "0.4"
+
+[build-dependencies]
+tonic-build = "0.12"
+
+[features]
+default = []
+tracing = ["opentelemetry", "opentelemetry-otlp", "tracing-opentelemetry"]
+
+[dev-dependencies]
+tokio-test = "0.4"
+tempfile = "3"

@@ -796,80 +796,9 @@ impl<S: Storage> Reseolio for ReseolioServer<S> {
             schedule.id, schedule.name
         );
 
-        // === Pre-Scheduling Optimization ===
-        // Check if the schedule's next_run_at falls before the next poll would occur.
-        // If so, we need to pre-create the job(s) now to prevent missing the execution.
-        //
-        // This optimization allows us to use longer poll intervals (e.g., 10s) without
-        // risking missed executions for schedules created close to their trigger time.
-
-        let now = chrono::Utc::now();
-        let next_poll_at = now
-            + chrono::Duration::from_std(self.schedule_poll_interval)
-                .unwrap_or(chrono::Duration::seconds(10));
-
-        // Only pre-schedule if the schedule is active and would trigger before next poll
-        if schedule.status == crate::storage::ScheduleStatus::Active
-            && schedule.next_run_at < next_poll_at
-        {
-            debug!(
-                "[CREATE_SCHEDULE] Pre-scheduling: next_run_at={:?} < next_poll_at={:?}",
-                schedule.next_run_at, next_poll_at
-            );
-
-            // Calculate how many jobs would trigger before the next poll
-            let mut run_time = schedule.next_run_at;
-            let mut jobs_created = 0;
-
-            while run_time < next_poll_at {
-                let schedule_run_id = format!("{}:{}", schedule.id, run_time.timestamp());
-
-                let new_job = NewJob {
-                    name: schedule.name.clone(),
-                    args: vec![],
-                    options: schedule.handler_options.clone(),
-                    idempotency_key: Some(schedule_run_id.clone()),
-                };
-
-                match self
-                    .storage
-                    .insert_scheduled_job(new_job, &schedule.id, &schedule_run_id)
-                    .await
-                {
-                    Ok((job, was_deduplicated)) => {
-                        if was_deduplicated {
-                            debug!(
-                                "[CREATE_SCHEDULE] Pre-scheduled job already existed: {}",
-                                job.id
-                            );
-                        } else {
-                            info!(
-                                "[CREATE_SCHEDULE] Pre-scheduled job created: {} for {}",
-                                job.id, run_time
-                            );
-                            jobs_created += 1;
-                        }
-                    }
-                    Err(e) => {
-                        // Log but don't fail - the scheduler will pick it up
-                        warn!("[CREATE_SCHEDULE] Failed to pre-schedule job: {}", e);
-                    }
-                }
-
-                // Calculate next run time for this schedule
-                match next_cron_time(&schedule.cron_expression, &schedule.timezone, run_time) {
-                    Ok(next) => run_time = next,
-                    Err(_) => break, // Can't calculate next, stop pre-scheduling
-                }
-            }
-
-            if jobs_created > 0 {
-                info!(
-                    "[CREATE_SCHEDULE] Pre-scheduled {} job(s) for schedule {}",
-                    jobs_created, schedule.id
-                );
-            }
-        }
+        // Notify the scheduler to wake up immediately and check for new schedules
+        // This replaces the complex manual "pre-scheduling" logic
+        self.scheduler_notify.notify_one();
 
         Ok(Response::new(schedule_to_proto(&schedule)))
     }
@@ -1037,68 +966,7 @@ impl<S: Storage> Reseolio for ReseolioServer<S> {
 
         info!("[RESUME_SCHEDULE] Resumed schedule: {}", schedule_id);
 
-        // === Pre-Scheduling Optimization for Resume ===
-        // When resuming, check if the schedule's next_run_at falls before the next poll.
-        // This is the same optimization as create_schedule to prevent missed executions.
-
-        let now = chrono::Utc::now();
-        let next_poll_at = now
-            + chrono::Duration::from_std(self.schedule_poll_interval)
-                .unwrap_or(chrono::Duration::seconds(10));
-
-        if schedule.status == crate::storage::ScheduleStatus::Active
-            && schedule.next_run_at < next_poll_at
-        {
-            debug!(
-                "[RESUME_SCHEDULE] Pre-scheduling: next_run_at={:?} < next_poll_at={:?}",
-                schedule.next_run_at, next_poll_at
-            );
-
-            let mut run_time = schedule.next_run_at;
-            let mut jobs_created = 0;
-
-            while run_time < next_poll_at {
-                let schedule_run_id = format!("{}:{}", schedule.id, run_time.timestamp());
-
-                let new_job = NewJob {
-                    name: schedule.name.clone(),
-                    args: vec![],
-                    options: schedule.handler_options.clone(),
-                    idempotency_key: Some(schedule_run_id.clone()),
-                };
-
-                match self
-                    .storage
-                    .insert_scheduled_job(new_job, &schedule.id, &schedule_run_id)
-                    .await
-                {
-                    Ok((job, was_deduplicated)) => {
-                        if !was_deduplicated {
-                            info!(
-                                "[RESUME_SCHEDULE] Pre-scheduled job created: {} for {}",
-                                job.id, run_time
-                            );
-                            jobs_created += 1;
-                        }
-                    }
-                    Err(e) => {
-                        warn!("[RESUME_SCHEDULE] Failed to pre-schedule job: {}", e);
-                    }
-                }
-
-                match next_cron_time(&schedule.cron_expression, &schedule.timezone, run_time) {
-                    Ok(next) => run_time = next,
-                    Err(_) => break,
-                }
-            }
-
-            if jobs_created > 0 {
-                info!(
-                    "[RESUME_SCHEDULE] Pre-scheduled {} job(s) for schedule {}",
-                    jobs_created, schedule.id
-                );
-            }
-        }
+        self.scheduler_notify.notify_one();
 
         Ok(Response::new(schedule_to_proto(&schedule)))
     }

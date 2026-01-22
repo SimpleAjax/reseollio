@@ -1035,68 +1035,72 @@ impl Storage for SqliteStorage {
         Ok(rows > 0)
     }
 
-    async fn get_due_schedules(&self) -> Result<Vec<Schedule>> {
-        let conn = self.conn.lock().await;
-        let now = Utc::now().timestamp();
+    async fn trigger_due_schedules(&self) -> Result<usize> {
+        let mut conn = self.conn.lock().await;
+        let diff_now = Utc::now().timestamp();
+        let mut triggered_count = 0;
 
-        let mut stmt = conn
+        let tx = conn.transaction().map_err(StorageError::from)?;
+
+        // 1. Fetch due schedules (no SKIP LOCKED for SQLite, just normal select)
+        // Since we hold the Mutex lock, we are effectively exclusive for this process
+        let mut stmt = tx
             .prepare(
                 r#"
-                SELECT id, name, cron_expression, timezone, handler_options, args,
-                       status, next_run_at, last_run_at, created_at, updated_at
-                FROM schedules 
-                WHERE status = 'active' AND next_run_at <= ?1
-                "#,
+            SELECT id, name, cron_expression, timezone, handler_options, args,
+                   status, next_run_at, last_run_at, created_at, updated_at
+            FROM schedules
+            WHERE status = 'active' AND next_run_at <= ?1
+            LIMIT 100
+            "#,
             )
             .map_err(StorageError::from)?;
 
+        // Use a block to ensure stmt doesn't live too long
         let schedules = stmt
-            .query_map(params![now], |row| row_to_schedule(row))
+            .query_map(params![diff_now], |row| row_to_schedule(row))
             .map_err(StorageError::from)?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(StorageError::from)?;
 
-        Ok(schedules)
-    }
+        drop(stmt); // Explicit drop to satisfy borrow checker if block didn't work
 
-    async fn update_schedule_after_trigger(
-        &self,
-        schedule_id: &str,
-        next_run_at: chrono::DateTime<chrono::Utc>,
-    ) -> Result<()> {
-        let conn = self.conn.lock().await;
-        let now = Utc::now().timestamp();
+        if schedules.is_empty() {
+            return Ok(0);
+        }
 
-        conn.execute(
-            r#"
-            UPDATE schedules 
-            SET next_run_at = ?2, last_run_at = ?3, updated_at = ?3
-            WHERE id = ?1
-            "#,
-            params![schedule_id, next_run_at.timestamp(), now],
-        )
-        .map_err(StorageError::from)?;
+        for schedule in schedules {
+            // Calculate next run time
+            let next_run =
+                match next_cron_time(&schedule.cron_expression, &schedule.timezone, Utc::now()) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        tracing::error!(
+                            "Failed to calculate next run for schedule {}: {}",
+                            schedule.id,
+                            e
+                        );
+                        continue;
+                    }
+                };
 
-        Ok(())
-    }
+            // Prepare job
+            let schedule_run_id = format!("{}:{}", schedule.id, schedule.next_run_at.timestamp());
 
-    async fn insert_scheduled_job(
-        &self,
-        new_job: NewJob,
-        schedule_id: &str,
-        schedule_run_id: &str,
-    ) -> Result<(InternalJob, bool)> {
-        let job = new_job.into_job();
-        let conn = self.conn.lock().await;
+            let job = NewJob {
+                name: schedule.name.clone(),
+                args: schedule.args.clone(),
+                options: schedule.handler_options.clone(),
+                idempotency_key: Some(schedule_run_id.clone()),
+            }
+            .into_job();
+            let options_json = serde_json::to_string(&job.options)?;
 
-        let options_json = serde_json::to_string(&job.options)?;
-
-        // Use INSERT OR IGNORE for idempotency
-        let rows = conn
-            .execute(
+            // Insert Job (manual insert to use transaction)
+            tx.execute(
                 r#"
                 INSERT OR IGNORE INTO jobs (id, name, args, options, status, attempt, 
-                                  created_at, scheduled_at, idempotency_key, 
+                                  created_at, scheduled_at, idempotency_key,
                                   schedule_id, schedule_run_id)
                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
                 "#,
@@ -1109,30 +1113,47 @@ impl Storage for SqliteStorage {
                     job.attempt,
                     job.created_at.timestamp(),
                     job.scheduled_at.timestamp(),
-                    &schedule_run_id, // Use schedule_run_id as idempotency key
-                    schedule_id,
-                    schedule_run_id,
+                    &job.idempotency_key,
+                    &schedule.id,
+                    &schedule_run_id
                 ],
             )
             .map_err(StorageError::from)?;
 
-        let was_deduplicated = rows == 0;
+            // Update Schedule
+            tx.execute(
+                r#"
+                UPDATE schedules 
+                SET next_run_at = ?2, last_run_at = ?3, updated_at = ?3
+                WHERE id = ?1
+                "#,
+                params![&schedule.id, next_run.timestamp(), diff_now],
+            )
+            .map_err(StorageError::from)?;
 
-        if was_deduplicated {
-            // Job already existed, fetch it
-            if let Some(existing) = self
-                .get_job_by_idempotency_key(&job.name, schedule_run_id)
-                .await?
-            {
-                return Ok((existing, true));
-            }
+            triggered_count += 1;
         }
 
-        debug!(
-            "Inserted scheduled job: {} ({}) for schedule {}",
-            job.id, job.name, schedule_id
-        );
-        Ok((job, was_deduplicated))
+        tx.commit().map_err(StorageError::from)?;
+
+        Ok(triggered_count)
+    }
+
+    async fn get_next_schedule_time(&self) -> Result<Option<chrono::DateTime<chrono::Utc>>> {
+        let conn = self.conn.lock().await;
+
+        // Rusqlite's query_row maps the single row result
+        let timestamp: Option<i64> = conn
+            .query_row(
+                "SELECT MIN(next_run_at) FROM schedules WHERE status = 'active'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(StorageError::from)?
+            .flatten();
+
+        Ok(timestamp.map(timestamp_to_datetime))
     }
 }
 

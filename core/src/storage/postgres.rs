@@ -1180,105 +1180,125 @@ impl Storage for PostgresStorage {
         Ok(result.rows_affected() > 0)
     }
 
-    async fn get_due_schedules(&self) -> Result<Vec<Schedule>> {
+    async fn trigger_due_schedules(&self) -> Result<usize> {
+        let mut tx = self.pool.begin().await.map_err(StorageError::from)?;
         let now = Utc::now().timestamp();
 
+        // 1. Fetch due schedules with SKIP LOCKED
         let rows = sqlx::query(
             r#"
             SELECT id, name, cron_expression, timezone, handler_options, args,
                    status, next_run_at, last_run_at, created_at, updated_at
-            FROM schedules 
+            FROM schedules
             WHERE status = 'active' AND next_run_at <= $1
+            FOR UPDATE SKIP LOCKED
+            LIMIT 100
             "#,
         )
         .bind(now)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *tx)
         .await
         .map_err(StorageError::from)?;
 
-        let mut schedules = Vec::new();
+        if rows.is_empty() {
+            return Ok(0);
+        }
+
+        let mut triggered_count = 0;
+
         for row in rows {
-            schedules.push(row_to_schedule(&row)?);
-        }
+            let schedule = row_to_schedule(&row)?;
 
-        Ok(schedules)
-    }
+            // Calculate next run time
+            let next_run =
+                match next_cron_time(&schedule.cron_expression, &schedule.timezone, Utc::now()) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        // Log error but don't fail the whole batch?
+                        // Ideally we should mark schedule as error/paused?
+                        // For now, logging and skipping is safer than crashing the transaction
+                        tracing::error!(
+                            "Failed to calculate next run for schedule {}: {}",
+                            schedule.id,
+                            e
+                        );
+                        continue;
+                    }
+                };
 
-    async fn update_schedule_after_trigger(
-        &self,
-        schedule_id: &str,
-        next_run_at: chrono::DateTime<chrono::Utc>,
-    ) -> Result<()> {
-        let now = Utc::now().timestamp();
+            // Prepare job
+            let schedule_run_id = format!("{}:{}", schedule.id, schedule.next_run_at.timestamp());
 
-        sqlx::query(
-            r#"
-            UPDATE schedules 
-            SET next_run_at = $2, last_run_at = $3, updated_at = $3
-            WHERE id = $1
-            "#,
-        )
-        .bind(schedule_id)
-        .bind(next_run_at.timestamp())
-        .bind(now)
-        .execute(&self.pool)
-        .await
-        .map_err(StorageError::from)?;
-
-        Ok(())
-    }
-
-    async fn insert_scheduled_job(
-        &self,
-        new_job: NewJob,
-        schedule_id: &str,
-        schedule_run_id: &str,
-    ) -> Result<(InternalJob, bool)> {
-        let job = new_job.into_job();
-        let options_json = serde_json::to_string(&job.options)?;
-
-        // Use INSERT ON CONFLICT DO NOTHING for idempotency
-        let result = sqlx::query(
-            r#"
-            INSERT INTO jobs (id, name, args, options, status, attempt, 
-                              created_at, scheduled_at, idempotency_key,
-                              schedule_id, schedule_run_id)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-            ON CONFLICT (name, idempotency_key) DO NOTHING
-            "#,
-        )
-        .bind(&job.id)
-        .bind(&job.name)
-        .bind(&job.args)
-        .bind(&options_json)
-        .bind(job.status.as_str())
-        .bind(job.attempt)
-        .bind(job.created_at.timestamp())
-        .bind(job.scheduled_at.timestamp())
-        .bind(schedule_run_id) // Use schedule_run_id as idempotency key
-        .bind(schedule_id)
-        .bind(schedule_run_id)
-        .execute(&self.pool)
-        .await
-        .map_err(StorageError::from)?;
-
-        let was_deduplicated = result.rows_affected() == 0;
-
-        if was_deduplicated {
-            // Job already existed, fetch it
-            if let Some(existing) = self
-                .get_job_by_idempotency_key(&job.name, schedule_run_id)
-                .await?
-            {
-                return Ok((existing, true));
+            let job = NewJob {
+                name: schedule.name.clone(),
+                args: schedule.args.clone(),
+                options: schedule.handler_options.clone(),
+                idempotency_key: Some(schedule_run_id.clone()),
             }
+            .into_job();
+            let options_json = serde_json::to_string(&job.options)?;
+
+            // Insert Job (manual insert to use transaction)
+            sqlx::query(
+                r#"
+                INSERT INTO jobs (id, name, args, options, status, attempt, 
+                                  created_at, scheduled_at, idempotency_key,
+                                  schedule_id, schedule_run_id)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                ON CONFLICT (name, idempotency_key) DO NOTHING
+                "#,
+            )
+            .bind(&job.id)
+            .bind(&job.name)
+            .bind(&job.args)
+            .bind(&options_json)
+            .bind(job.status.as_str())
+            .bind(job.attempt)
+            .bind(job.created_at.timestamp())
+            .bind(job.scheduled_at.timestamp())
+            .bind(schedule_run_id.as_str())
+            .bind(&schedule.id)
+            .bind(schedule_run_id.as_str())
+            .execute(&mut *tx)
+            .await
+            .map_err(StorageError::from)?;
+
+            // Update Schedule
+            sqlx::query(
+                r#"
+                UPDATE schedules 
+                SET next_run_at = $2, last_run_at = $3, updated_at = $3
+                WHERE id = $1
+                "#,
+            )
+            .bind(&schedule.id)
+            .bind(next_run.timestamp())
+            .bind(now)
+            .execute(&mut *tx)
+            .await
+            .map_err(StorageError::from)?;
+
+            triggered_count += 1;
         }
 
-        debug!(
-            "Inserted scheduled job: {} ({}) for schedule {}",
-            job.id, job.name, schedule_id
-        );
-        Ok((job, was_deduplicated))
+        tx.commit().await.map_err(StorageError::from)?;
+
+        Ok(triggered_count)
+    }
+
+    async fn get_next_schedule_time(&self) -> Result<Option<chrono::DateTime<chrono::Utc>>> {
+        let row = sqlx::query(
+            r#"
+            SELECT MIN(next_run_at) FROM schedules WHERE status = 'active'
+            "#,
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(StorageError::from)?;
+
+        let timestamp: Option<i64> = row.try_get(0).ok();
+
+        Ok(timestamp.map(timestamp_to_datetime))
     }
 }
 

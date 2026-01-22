@@ -148,6 +148,7 @@ async fn run_with_storage<S: Storage>(
     let registry = WorkerRegistry::new();
     let scheduler_notify = Arc::new(Notify::new());
     let cron_shutdown_notify = Arc::new(Notify::new());
+    let job_shutdown_notify = Arc::new(Notify::new());
 
     // Initialize Prometheus metrics registry (always create, but only start server if enabled)
     let metrics_registry = Arc::new(metrics::MetricsRegistry::new(
@@ -165,10 +166,14 @@ async fn run_with_storage<S: Storage>(
     };
 
     // Start the push-based job scheduler
-    let job_scheduler =
-        scheduler::Scheduler::new(storage.clone(), registry.clone(), scheduler_notify.clone())
-            .with_poll_interval(tokio::time::Duration::from_millis(config.poll_interval_ms))
-            .with_batch_size(config.batch_size);
+    let job_scheduler = scheduler::Scheduler::new(
+        storage.clone(),
+        registry.clone(),
+        scheduler_notify.clone(),
+        job_shutdown_notify.clone(),
+    )
+    .with_poll_interval(tokio::time::Duration::from_millis(config.poll_interval_ms))
+    .with_batch_size(config.batch_size);
 
     let job_scheduler_handle = tokio::spawn(async move { job_scheduler.run().await });
 
@@ -210,8 +215,34 @@ async fn run_with_storage<S: Storage>(
     .await?;
 
     // Graceful shutdown
-    job_scheduler_handle.abort();
-    cron_scheduler_handle.abort();
+    // Wait for Ctrl+C signal
+    match tokio::signal::ctrl_c().await {
+        Ok(()) => info!("Received shutdown signal..."),
+        Err(err) => tracing::error!("Unable to listen for shutdown signal: {}", err),
+    }
+
+    info!("Initiating graceful shutdown...");
+
+    // 1. Signal the components to stop
+    job_shutdown_notify.notify_one();
+    cron_shutdown_notify.notify_one();
+
+    // 2. Wait for them to finish their current iteration
+    // We use join! to wait for both, with a timeout just in case they get stuck
+    let shutdown_timeout = tokio::time::Duration::from_secs(5);
+
+    let shutdown_results = tokio::time::timeout(shutdown_timeout, async {
+        tokio::join!(job_scheduler_handle, cron_scheduler_handle)
+    })
+    .await;
+
+    match shutdown_results {
+        Ok(_) => info!("Schedulers executed graceful shutdown"),
+        Err(_) => {
+            tracing::warn!("Shutdown timed out, forcing exit");
+        }
+    }
+
     if let Some(handle) = metrics_handle {
         handle.abort();
     }

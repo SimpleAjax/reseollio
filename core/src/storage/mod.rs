@@ -117,23 +117,20 @@ pub trait Storage: Clone + Send + Sync + 'static {
     /// Delete a schedule (soft delete - marks as deleted)
     async fn delete_schedule(&self, schedule_id: &str) -> Result<bool>;
 
-    /// Get schedules that are due to run (active and next_run_at <= now)
-    async fn get_due_schedules(&self) -> Result<Vec<Schedule>>;
+    /// atomic trigger of due schedules
+    /// This method should:
+    /// 1. Fetch due schedules (locking them if possible)
+    /// 2. For each schedule:
+    ///    a. Calculate next_run_at
+    ///    b. Create a new job
+    ///    c. Update schedule's next_run_at
+    /// 3. Commit/Return
+    /// Returns the number of schedules triggered
+    async fn trigger_due_schedules(&self) -> Result<usize>;
 
-    /// Update schedule's next_run_at and last_run_at after triggering
-    async fn update_schedule_after_trigger(
-        &self,
-        schedule_id: &str,
-        next_run_at: chrono::DateTime<chrono::Utc>,
-    ) -> Result<()>;
-
-    /// Insert a scheduled job with schedule reference (uses idempotency)
-    async fn insert_scheduled_job(
-        &self,
-        job: NewJob,
-        schedule_id: &str,
-        schedule_run_id: &str,
-    ) -> Result<(InternalJob, bool)>; // Returns (job, was_deduplicated)
+    /// Get the next scheduled run time of any active schedule
+    /// Used for smart sleeping in the cron loop
+    async fn get_next_schedule_time(&self) -> Result<Option<chrono::DateTime<chrono::Utc>>>;
 }
 
 /// Convert unix timestamp to DateTime<Utc>
